@@ -1,0 +1,152 @@
+# Registry of stable warning codes (every warning has a documented code).
+# `sorb explain-warning <code>` reads this file.
+
+[SORB-W001]
+title = "analysis-gap"
+explanation = "A file or scope could not be fully analysed (parser failure, timeout, or resource budget hit). The SBOM's completeness claim for the affected scope is downgraded; the component list may be partial there."
+remediation = "Re-run with --log-format json to see the failing file and detector. If the file is well-formed, report a bug with the file attached."
+
+[SORB-W010]
+title = "stale-lockfile"
+explanation = "The lockfile does not match its manifest (e.g. poetry.lock content-hash differs from pyproject.toml). Lock-tier findings from it had their confidence reduced (x0.7)."
+remediation = "Regenerate the lockfile (e.g. `poetry lock`, `npm install --package-lock-only`) and commit it."
+
+[SORB-W011]
+title = "orphan-installed-state"
+explanation = "Installed packages were found on disk (e.g. node_modules/, site-packages/) with no matching lockfile or manifest entry. They may be leftovers from a previous branch or manual installs. Confidence reduced (x0.8)."
+remediation = "Reinstall from the lockfile (e.g. `npm ci`) or remove the stale install directory."
+
+[SORB-W012]
+title = "unresolved-dynamic-manifest"
+explanation = "A manifest computes its dependencies at build time (e.g. a dynamic setup.py), so its dependencies could not be extracted statically. Nothing was guessed."
+remediation = "Run with --resolve=native (sandboxed) to evaluate the manifest, or declare dependencies statically."
+
+[SORB-W013]
+title = "resolution-incomplete"
+explanation = "Declared version ranges could not be resolved to concrete versions (no lockfile, and resolution unavailable or offline). Components are emitted at declared tier without versions — never guessed."
+remediation = "Commit a lockfile, or run online / with --resolve=native to resolve ranges."
+
+[SORB-W020]
+title = "version-conflict"
+explanation = "Two same-tier sources of truth disagree about a component's version (e.g. two lockfiles pin different versions). Both evidences are attached; the conflict is surfaced, not resolved silently."
+remediation = "Inspect both evidence records with `sorb explain` and remove or regenerate the stale source."
+
+[SORB-W030]
+title = "drift: declared-not-installed"
+explanation = "A dependency is declared in a manifest but absent from lockfiles and installed state — it is asked for but not present."
+remediation = "Install dependencies, or remove the unused declaration."
+
+[SORB-W031]
+title = "drift: installed-not-declared"
+explanation = "A package exists in installed state (node_modules/, site-packages/, ...) but no manifest or lockfile accounts for it — a phantom or leftover."
+remediation = "Reinstall from the lockfile (`npm ci`, `pip sync`), or declare the dependency if it is really used."
+
+[SORB-W032]
+title = "drift: locked-vs-installed"
+explanation = "The lockfile pins one version but a different version is actually installed on disk. The disagreement is reported; the higher-tier (installed) version pins the component."
+remediation = "Re-run the package manager's install from the lockfile so disk matches lock."
+
+[SORB-W040]
+title = "ambiguous-declared"
+explanation = "A declared (versionless) dependency matches multiple concrete versions found in this scan; it could not be attributed to exactly one and was kept as a separate declared-tier entry."
+remediation = "Usually harmless in monorepos with multiple versions; use `sorb explain` on the concrete versions to see their provenance."
+
+[SORB-W050]
+title = "unidentified-binaries"
+explanation = "Binaries were found that could not be identified confidently. They are listed in the SBOM's unidentified inventory (path, digest, format hints) rather than guessed."
+remediation = "Update signature packs (`sorb db update`) or report the binaries to grow the signature database."
+
+[SORB-W033]
+title = "drift: attestation-mismatch"
+explanation = "The image carries a publisher-attached SBOM attestation that disagrees with what the scan actually found in the image (different version, or a claimed component with no trace on the filesystem). Attestations are ingested and verified, never blindly trusted; the disagreement is surfaced as a finding."
+remediation = "Rebuild and re-attest the image so the attestation matches its content, or investigate why the published SBOM diverges — a stale or wrong attestation defeats downstream vulnerability matching."
+
+[SORB-W034]
+title = "package-changed-during-build"
+explanation = "A package was upgraded or deleted partway through the image build (visible in the layer-by-layer package database history). The earlier version still exists in lower layers of the image — relevant for layer-cache security review even though it is absent from the final filesystem."
+remediation = "Squash or rebuild the image if lower layers must not carry the old version. Use --include-removed to emit removed/superseded packages into the SBOM; `sorb explain <name>` shows both layers."
+
+[SORB-W014]
+title = "enrichment-degraded"
+explanation = "Optional registry-metadata enrichment could not reach the registry (or had no cache) for some components. The SBOM is complete and correct — it just carries fewer descriptive fields than an online run would."
+remediation = "Re-run online (without --offline) or pre-warm the cache; enrichment is additive-only, so nothing else changes."
+
+[SORB-W035]
+title = "drift: lock-outside-range"
+explanation = "A lockfile pins a version that does not satisfy the manifest's declared range for that package — the lock is stale or was edited by hand. The locked version is still what installs, so it is what the SBOM reports."
+remediation = "Regenerate the lockfile (npm install --package-lock-only / pnpm install --lockfile-only) so it satisfies the manifest again."
+
+[SORB-W021]
+title = "merge-conflict"
+explanation = "Two merged SBOM inputs disagree about the same component (different version or license for the same identity). Both claims are kept with per-input provenance; the disagreement is surfaced, never last-writer-wins."
+remediation = "Inspect the conflicting inputs named in the annotation and re-generate the stale one."
+
+[SORB-W041]
+title = "license-undetected"
+explanation = "A LICENSE/COPYING file did not match any license text in the corpus at the confidence threshold. Nothing was guessed; the file is named so a human can classify it."
+remediation = "Run `sorb db update` to fetch the full license corpus, or check whether the file is a custom/modified license."
+
+[SORB-W042]
+title = "license-mismatch"
+explanation = "The license declared in a manifest differs from the license detected in the project's LICENSE file. Declared and detected are kept separate; the disagreement is the finding."
+remediation = "Align the manifest's license field with the LICENSE file (or vice versa)."
+
+[SORB-W070]
+title = "sbom-schema-violation"
+explanation = "The document failed structural validation for its declared format/version (missing required fields or wrong types)."
+remediation = "Regenerate the SBOM with a conforming producer, or fix the named fields."
+
+[SORB-W071]
+title = "ntia-minimum-elements"
+explanation = "The SBOM is missing one or more NTIA minimum elements (supplier, component name, version, unique identifier, dependency relationships, author, timestamp)."
+remediation = "Re-emit with the missing elements populated; the report names each absent element."
+
+[SORB-W072]
+title = "tr03183-requirement"
+explanation = "The SBOM does not meet a BSI TR-03183-2 requirement (e.g. missing creator, component licenses, or hashes)."
+remediation = "Re-emit with the named fields populated."
+
+[SORB-W015]
+title = "native-resolution-degraded"
+explanation = "Native resolution (--resolve=native) could not run to completion — the toolchain was missing, the sandbox was unavailable, or the build tool failed. The scan falls back to static analysis; nothing was guessed."
+remediation = "Install the ecosystem's build tool, ensure the platform sandbox is available (or pass --dangerously-no-sandbox to accept running it unsandboxed), or rely on the default pure resolvers."
+
+[SORB-W036]
+title = "drift: observed-not-declared"
+explanation = "A package was loaded at runtime (observed by tracing) but no manifest or lockfile declares it — a phantom dependency that works only by accident (e.g. npm hoisting). If the accident goes away, the code breaks."
+remediation = "Declare the dependency explicitly in the manifest so it is guaranteed to be installed."
+
+[SORB-W037]
+title = "declared-never-observed"
+explanation = "A dependency is declared and installed but was never loaded in any runtime trace — it may be unused and prunable (verify across all code paths first; a dep used only in a rare branch will look unused in a short trace)."
+remediation = "Confirm the dependency is genuinely unused across all code paths, then remove it; or extend the trace to exercise the paths that use it."
+
+[SORB-W060]
+title = "unpinned-image"
+explanation = "A container image reference uses a floating tag (or 'latest') rather than a digest pin. The image the manifest resolves to can change without the manifest changing — a reproducibility and supply-chain risk."
+remediation = "Pin the image to a digest (image@sha256:...) so the deployed content is fixed."
+
+[SORB-W061]
+title = "drift: dockerfile-vs-image"
+explanation = "A package the Dockerfile's RUN commands install differs from what the built image actually contains (different version, or absent). The Dockerfile's prediction and the image's reality disagree."
+remediation = "Rebuild the image from the current Dockerfile, or reconcile the Dockerfile with how the image was actually built."
+
+[SORB-W062]
+title = "follow-image-unreachable"
+explanation = "An image referenced by IaC (--follow-images) could not be pulled and scanned — it was offline, in a private registry without credentials, or not found. The reference is still recorded as a Resource→image edge; only the image's contents are missing."
+remediation = "Provide registry credentials, run online, or pre-pull the image; or drop --follow-images to record references without scanning them."
+
+[SORB-W063]
+title = "remote-cache-unreachable"
+explanation = "The shared remote cache (--remote-cache) did not respond within the fail-open latency budget, or returned errors. The scan proceeded without it — results are correct, only the potential speed-up was lost. The remote cache is never allowed to fail a scan."
+remediation = "Check the cache server's health and the network; the local cache still applies. Remove --remote-cache to silence this if the server is intentionally down."
+
+[SORB-W064]
+title = "wasm-plugin-not-loaded"
+explanation = "A WASM plugin declared under [plugins].wasm in sorb.toml could not be loaded — the module file was missing, its signature was absent or did not verify, or it does not implement the plugin ABI. The scan continued without it, so any components only that plugin would have found are absent."
+remediation = "Check the module/signature/key paths in sorb.toml, re-verify the plugin with `sorb verify <module>.sig --key <key> --sbom <module>`, and confirm the plugin exports the ABI (sorb_abi_version, sorb_alloc, sorb_matcher_globs, sorb_analyze)."
+
+[SORB-W065]
+title = "grpc-plugin-not-loaded"
+explanation = "A gRPC plugin declared under [plugins.grpc].services could not be used — the endpoint was not in the trusted list, was unreachable, or advertised no path patterns. The scan continued without it."
+remediation = "Add the endpoint to [plugins.grpc] trusted = [...], confirm the service is running and reachable over TLS (or list it under insecure = [...] for plaintext), and that its MatcherGlobs reply is non-empty."

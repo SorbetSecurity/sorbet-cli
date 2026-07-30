@@ -1,0 +1,29 @@
+# sorb-accel — native acceleration for the three hot paths.
+#
+# A PyO3 crate producing abi3 wheels (3 OSes x 2 archs in CI). It is a DROP-IN
+# optimization: the Python `sorb.accel` shim selects it at import time only after
+# a self-check confirms its hashing is byte-identical to the pure reference, so it
+# can never change scan output. Not built in the offline dev
+# environment — CI wheels are the deliverable.
+[package]
+name = "sorb-accel"
+version = "0.1.0"
+edition = "2021"
+description = "Native acceleration for sorbet: parallel walk+blake3, tar streaming, fingerprint matcher"
+license = "Apache-2.0"
+
+[lib]
+name = "sorb_accel"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py311", "extension-module"] }
+sha2 = "0.10"        # SHA-256 (SIMD), byte-identical to hashlib
+rayon = "1.10"       # data-parallel walk + hash
+tar = "0.4"          # streamed tar
+flate2 = "1.0"       # gzip
+zstd = "0.13"        # zstd layer decompression
+
+[dev-dependencies]
+# cargo-fuzz targets live under fuzz/ and mirror the Python atheris
+# targets so both harnesses share seed corpora.

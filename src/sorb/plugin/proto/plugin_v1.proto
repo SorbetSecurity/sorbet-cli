@@ -1,0 +1,33 @@
+// sorb out-of-process plugin protocol, version 1.
+//
+// Two services. A `Cataloger` analyzes matched file blobs; a `SourceProvider`
+// exposes a target (e.g. a cloud snapshot) as a walkable Source, streaming
+// blocks on demand so the host never downloads a whole disk. Findings
+// and file bytes cross the boundary as opaque payloads that the host
+// re-validates before ingestion.
+syntax = "proto3";
+package sorb.plugin.v1;
+
+service Cataloger {
+  rpc MatcherGlobs(Empty) returns (Globs);
+  rpc Analyze(AnalyzeRequest) returns (FindingsJson);
+}
+
+service SourceProvider {
+  rpc Root(Empty) returns (SourceRef);
+  rpc Walk(Empty) returns (stream Entry);
+  // Lazy, ranged reads — the provider streams only the blocks asked for.
+  rpc ReadRange(RangeRequest) returns (stream Chunk);
+  rpc Digest(PathRequest) returns (DigestReply);
+}
+
+message Empty {}
+message Globs { repeated string globs = 1; }
+message AnalyzeRequest { string path = 1; uint64 size = 2; bytes blob = 3; }
+message FindingsJson { bytes json = 1; }  // re-validated by the host, never trusted
+message SourceRef { string id = 1; string kind = 2; string ref = 3; }
+message Entry { string path = 1; uint64 size = 2; string role = 3; bytes sniff = 4; }
+message RangeRequest { string path = 1; uint64 offset = 2; uint64 length = 3; }
+message Chunk { bytes data = 1; }
+message PathRequest { string path = 1; }
+message DigestReply { string sha256 = 1; }

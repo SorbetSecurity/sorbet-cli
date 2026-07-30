@@ -1,0 +1,37 @@
+# Per-technique base confidence rates.
+# These are seed priors; the accuracy corpus will measure and replace
+# them per release. Changing a rate here changes output without code edits.
+
+version = 2
+
+[base_rates]
+"manifest-parse" = 0.85
+"lockfile-parse" = 0.92
+"installed-state" = 0.95
+"os-package-db" = 0.97
+"binary-buildinfo" = 0.99
+"imported-sbom" = 0.80
+"file-fingerprint" = 0.60
+"jar-manifest" = 0.65
+"assembly-identity" = 0.70
+"license-file" = 0.90
+"native-resolution" = 0.95
+"binary-versioninfo" = 0.90
+"embedded-sbom" = 0.80
+"frozen-app" = 0.70
+"binary-unidentified" = 0.50
+"fn-fingerprint-constants" = 0.60
+"fn-fingerprint-symbols" = 0.60
+"fn-fingerprint-functions" = 0.60
+"fn-fingerprint-sourcetree" = 0.60
+# Untrusted plugin tiers: the rate for a technique is the ceiling a plugin can
+# claim for it, so a plugin cannot assert more confidence than the technique earns.
+"plugin-analysis" = 0.75
+
+[modifiers]
+# Multiplicative context modifiers, each applied with a recorded reason.
+path-role-fixture = 0.3
+path-role-example = 0.3
+path-role-docs = 0.3
+stale-lockfile = 0.7
+orphan-installed-state = 0.8

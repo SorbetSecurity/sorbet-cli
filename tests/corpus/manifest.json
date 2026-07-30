@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "comment": "Golden corpus. Local fixture targets now; remote targets are added as {\"ref\": \"<url or image ref>\", \"digest\": \"sha256:...\"} entries fetched-and-cached by the runner, never committed. Fixture trees store gitignored paths under neutral names (gitignore, _node_modules, _venv); the harness renames them into place when materializing a copy for a scan.",
+  "targets": [
+    {
+      "name": "polyglot",
+      "path": "fixtures/polyglot",
+      "expected": "fixtures/polyglot/expected.json"
+    }
+  ]
+}

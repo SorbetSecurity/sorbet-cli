@@ -1,0 +1,149 @@
+# Release supply chain.
+# Builds standalone bundles (3 OSes), publishes to PyPI and ghcr, and —
+# dogfooding — runs `sorb scan` on sorb itself to publish a self-SBOM. Bundles
+# are attached to the GitHub Release under the names the Homebrew and winget
+# manifests expect, and every artifact is verifiable with `sorb verify`.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write   # PyPI trusted publishing + SLSA provenance
+
+jobs:
+  bundles:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, asset: sorb-linux-x86_64.tar.gz }
+          - { os: macos-latest, asset: sorb-macos-arm64.tar.gz }
+          - { os: macos-13, asset: sorb-macos-x86_64.tar.gz }
+          - { os: windows-latest, asset: sorb-windows-x86_64.zip }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -e . pyinstaller
+      - run: pyinstaller packaging/sorb.spec --distpath dist
+
+      - name: Smoke test the bundle (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          ./dist/sorb --version
+          ./dist/sorb scan . -o cyclonedx-json -f smoke.json
+          ./dist/sorb validate smoke.json
+      - name: Smoke test the bundle (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          .\dist\sorb.exe --version
+          .\dist\sorb.exe scan . -o cyclonedx-json -f smoke.json
+          .\dist\sorb.exe validate smoke.json
+
+      - name: Package the asset (POSIX)
+        if: runner.os != 'Windows'
+        run: tar -czf "${{ matrix.asset }}" -C dist sorb
+      - name: Package the asset (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path dist\sorb.exe -DestinationPath "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "bundle-${{ matrix.asset }}"
+          path: "${{ matrix.asset }}"
+
+  self-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -e ".[dev]"
+      # dogfood: sorb scans its own source tree, and the SBOM must validate
+      - run: |
+          sorb scan . -o cyclonedx-json -f sorb.self.cdx.json -o spdx3-json -f sorb.self.spdx3.json
+          sorb validate sorb.self.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: "self-sbom", path: "sorb.self.*" }
+
+  pypi:
+    runs-on: ubuntu-latest
+    needs: [bundles, self-sbom]
+    environment: pypi   # holds the trusted-publishing configuration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [bundles, self-sbom]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Collect the release assets
+        run: |
+          mkdir -p upload
+          find artifacts -type f \( -name 'sorb-*.tar.gz' -o -name 'sorb-*.zip' \
+            -o -name 'sorb.self.*' \) -exec cp {} upload/ \;
+          cd upload && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: upload/*
+          generate_release_notes: true
+
+  image:
+    runs-on: ubuntu-latest
+    needs: self-sbom
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: "${{ github.actor }}"
+          password: "${{ secrets.GITHUB_TOKEN }}"
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: |
+            ghcr.io/sorbetsecurity/sorb:${{ github.ref_name }}
+            ghcr.io/sorbetsecurity/sorb:latest
+          provenance: true   # SLSA build provenance attestation
+          sbom: true
+
+  packaging-manifests:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Fill the Homebrew and winget templates
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          digest() {
+            path=$(find artifacts -name "$1" | head -1)
+            test -n "$path" || { echo "missing release asset $1" >&2; exit 1; }
+            sha256sum "$path" | cut -d' ' -f1
+          }
+          mkdir -p filled
+          for src in packaging/homebrew/sorb.rb packaging/winget/SorbetSecurity.sorb.yaml; do
+            sed -e "s/{{VERSION}}/$version/g" \
+                -e "s/{{SHA256_MACOS_ARM64}}/$(digest sorb-macos-arm64.tar.gz)/g" \
+                -e "s/{{SHA256_MACOS_X86_64}}/$(digest sorb-macos-x86_64.tar.gz)/g" \
+                -e "s/{{SHA256_LINUX_X86_64}}/$(digest sorb-linux-x86_64.tar.gz)/g" \
+                -e "s/{{SHA256_WINDOWS_X86_64}}/$(digest sorb-windows-x86_64.zip)/g" \
+                "$src" > "filled/$(basename "$src")"
+          done
+          grep -r '{{' filled/ && { echo "unfilled template token remains" >&2; exit 1; } || true
+          cat filled/*
+      - uses: actions/upload-artifact@v4
+        with: { name: "packaging-manifests", path: "filled/*" }

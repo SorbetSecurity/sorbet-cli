@@ -1,0 +1,18 @@
+# winget manifest for the standalone sorb bundle.
+# Templated at release; {{VERSION}} / {{SHA256}} filled by the release pipeline.
+PackageIdentifier: SorbetSecurity.sorb
+PackageVersion: "{{VERSION}}"
+PackageName: sorb
+Publisher: SorbetSecurity
+License: Apache-2.0
+ShortDescription: Evidence-backed dependency analysis and SBOM generation
+InstallerType: zip
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/SorbetSecurity/sorbet-cli/releases/download/v{{VERSION}}/sorb-windows-x86_64.zip
+    InstallerSha256: "{{SHA256_WINDOWS_X86_64}}"
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: sorb.exe
+ManifestType: singleton
+ManifestVersion: 1.6.0

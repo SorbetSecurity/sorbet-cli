@@ -1,0 +1,43 @@
+# SorbetSecurity/sorb-action — scan a repo/image and upload the SBOM.
+# Flow: scan → emit CycloneDX/SPDX → upload artifact → optional
+# fail-on policy gate. Uses the ghcr image so no Python setup is needed.
+name: "Sorbet SBOM scan"
+description: "Generate an evidence-backed SBOM with sorb, upload it, and optionally gate on findings"
+branding:
+  icon: "shield"
+  color: "purple"
+inputs:
+  target:
+    description: "Scan target (dir, image:REF, host://, disk://…)"
+    default: "."
+  formats:
+    description: "Comma-separated output formats (cyclonedx-json, spdx-json, spdx3-json)"
+    default: "cyclonedx-json"
+  output:
+    description: "Output file path"
+    default: "sbom.cdx.json"
+  fail-on:
+    description: "Comma list flipping exit 2 (drift, stale-lockfile, version-conflict, phantom-deps)"
+    default: ""
+  offline:
+    description: "Absolute network kill-switch"
+    default: "false"
+outputs:
+  sbom:
+    description: "Path to the generated SBOM"
+    value: ${{ inputs.output }}
+runs:
+  using: "composite"
+  steps:
+    - name: Scan
+      shell: bash
+      run: |
+        args=(scan "${{ inputs.target }}" -o "${{ inputs.formats }}" -f "${{ inputs.output }}")
+        [ "${{ inputs.offline }}" = "true" ] && args+=(--offline)
+        [ -n "${{ inputs.fail-on }}" ] && args+=(--fail-on "${{ inputs.fail-on }}")
+        sorb "${args[@]}"
+    - name: Upload SBOM
+      uses: actions/upload-artifact@v4
+      with:
+        name: sbom
+        path: ${{ inputs.output }}
