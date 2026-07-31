@@ -320,6 +320,7 @@ def _ensure_builtin_loaded() -> None:
         cpp_build,
         cpp_vcpkg,
         dotnet,
+        dsl_manifests,
         golang,
         host_platform,
         iac_cloud,

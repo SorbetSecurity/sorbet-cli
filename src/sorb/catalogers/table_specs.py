@@ -78,5 +78,86 @@ SHARD_LOCK = LockfileSpec(
     tier=Tier.LOCKED,
 )
 
-for _spec in (PUBSPEC_LOCK, CARGO_LOCK, RENV_LOCK, JULIA_MANIFEST, NIMBLE_LOCK, SHARD_LOCK):
+#: One JSON document per installed package, written by conda at install time —
+#: the authoritative record of what is actually in an environment, the way
+#: `*.dist-info` is for pip. The file name carries name-version-build, but the
+#: document states them properly, so the directory is the only hint needed.
+CONDA_META = LockfileSpec(
+    id="conda/conda-meta",
+    match_glob="*conda-meta/*.json",
+    format=JSON,
+    packages_at="$",  # the document *is* the package
+    fields={"name": "$.name", "version": "$.version", "digest": "$.sha256"},
+    purl_type="conda",
+    tier=Tier.INSTALLED,
+    technique="installed-state",
+)
+
+#: PDM's lockfile is `[[package]]` array-of-tables, structurally identical to
+#: Cargo.lock. Hashes live under `files[].hash`, which the mini-path does not
+#: reach into, so they are left to the installed-state cataloger.
+PDM_LOCK = LockfileSpec(
+    id="python/pdm-lock",
+    match="pdm.lock",
+    format=TOML,
+    packages_at="$.package[*]",
+    fields={"name": "$.name", "version": "$.version"},
+    purl_type="pypi",
+    tier=Tier.LOCKED,
+)
+
+#: A flake input is pinned by the git revision in its `locked` block; the
+#: `root` node has no `locked` and is skipped for want of a version. narHash is
+#: deliberately not mapped to `hashes`: it is a base64 SRI string over a store
+#: path, not the hex content digest every other hash field holds.
+FLAKE_LOCK = LockfileSpec(
+    id="nix/flake-lock",
+    match="flake.lock",
+    format=JSON,
+    packages_at="$.nodes.*",
+    fields={"name": "@key", "version": "$.locked.rev"},
+    purl_type="nix",
+    tier=Tier.LOCKED,
+)
+
+#: Unity's package manifest maps package id → version directly. The path glob
+#: matters: a bare `manifest.json` is far too common a name to claim.
+UNITY_MANIFEST = LockfileSpec(
+    id="unity/packages-manifest",
+    match_glob="*Packages/manifest.json",
+    format=JSON,
+    packages_at="$.dependencies.*",
+    fields={"name": "@key", "version": "@value"},
+    purl_type="unity",
+    tier=Tier.DECLARED,
+    technique="manifest-parse",
+)
+
+#: Every snap carries `meta/snap.yaml` stating its own name and version — the
+#: install record for `/snap/<name>/current`, and equally the manifest inside a
+#: `.snap` squashfs.
+SNAP_YAML = LockfileSpec(
+    id="os/snap",
+    match_glob="*meta/snap.yaml",
+    format=YAML,
+    packages_at="$",  # the document *is* the package
+    fields={"name": "$.name", "version": "$.version"},
+    purl_type="snap",
+    tier=Tier.INSTALLED,
+    technique="installed-state",
+)
+
+for _spec in (
+    PUBSPEC_LOCK,
+    CARGO_LOCK,
+    RENV_LOCK,
+    JULIA_MANIFEST,
+    NIMBLE_LOCK,
+    SHARD_LOCK,
+    CONDA_META,
+    PDM_LOCK,
+    FLAKE_LOCK,
+    UNITY_MANIFEST,
+    SNAP_YAML,
+):
     register(TableCataloger(_spec))

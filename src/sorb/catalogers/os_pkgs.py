@@ -269,3 +269,57 @@ class PacmanCataloger(Cataloger):
 register(DpkgCataloger())
 register(ApkCataloger())
 register(PacmanCataloger())
+
+
+# -- Gentoo portage ----------------------------------------------------------------------
+
+#: A Gentoo `PF` is `<name>-<version>[-r<rev>]`. The version starts at the first
+#: hyphen followed by a digit, which is what separates `docbook-xml-dtd` from
+#: `4.1.2-r7` — a name may itself contain hyphens.
+_PF_RE = re.compile(r"^(?P<name>.+?)-(?P<version>\d[^-]*(?:[-_][a-z]\w*)*(?:-r\d+)?)$")
+
+
+class PortageCataloger(Cataloger):
+    """Gentoo's VDB: one directory per installed package under `/var/db/pkg`.
+
+    `PF` names the package, and the sibling `CATEGORY` gives the namespace that
+    makes it unique — `dev-libs/openssl` and `dev-util/openssl` would otherwise
+    collide.
+    """
+
+    id = "os/portage"
+    version = 1
+    matchers = [Matcher(glob="*var/db/pkg/*/*/PF")]
+
+    def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
+        pf = blob.decode("utf-8", errors="replace").strip()
+        m = _PF_RE.match(pf)
+        if not m:
+            return
+        name, version = m.group("name"), m.group("version")
+        pkg_dir = entry.path.rsplit("/", 1)[0]
+        category = _sibling(ctx, pkg_dir, "CATEGORY") or entry.path.split("/")[-3]
+        slot = _sibling(ctx, pkg_dir, "SLOT")
+        repository = _sibling(ctx, pkg_dir, "repository")
+        qualifiers = {k: v for k, v in (("slot", slot), ("repository", repository)) if v}
+        purl = make_purl("ebuild", name, version, namespace=category, qualifiers=qualifiers)
+        yield Finding(
+            claim=ComponentClaim(
+                ctype="os-package", name=name, version=version, purl=purl,
+                ecosystem="ebuild", namespace=category,
+                qualifiers=tuple(sorted(qualifiers.items())),
+            ),
+            evidence=(
+                ctx.evidence("installed-state", Tier.INSTALLED, entry, captured=f"{category}/{pf}"),
+            ),
+        )
+
+
+def _sibling(ctx: CatalogerContext, directory: str, name: str) -> str | None:
+    raw = ctx.peek(f"{directory}/{name}")
+    if raw is None:
+        return None
+    return raw.decode("utf-8", errors="replace").strip() or None
+
+
+register(PortageCataloger())

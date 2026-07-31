@@ -768,3 +768,161 @@ register(NpmLockCataloger())
 register(PnpmLockCataloger())
 register(YarnLockCataloger())
 register(NodeModulesCataloger())
+
+
+# -- Bun -------------------------------------------------------------------------
+
+#: `bun.lock` is JSONC: bun writes trailing commas, which strict JSON rejects.
+#: Only commas that directly precede a closing brace/bracket are removed, and
+#: never inside a string, so integrity values survive untouched.
+_TRAILING_COMMA_RE = re.compile(r",(?=\s*[}\]])")
+_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def strip_jsonc_trailing_commas(text: str) -> str:
+    """Remove trailing commas outside string literals."""
+    out: list[str] = []
+    last = 0
+    for m in _STRING_RE.finditer(text):
+        out.append(_TRAILING_COMMA_RE.sub("", text[last : m.start()]))
+        out.append(m.group(0))  # strings pass through verbatim
+        last = m.end()
+    out.append(_TRAILING_COMMA_RE.sub("", text[last:]))
+    return "".join(out)
+
+
+#: `@scope/name@1.2.3` → ("@scope/name", "1.2.3"). A protocol version
+#: (`github:…`, `workspace:*`, `file:…`) is not a released version.
+def split_name_version(spec: str) -> tuple[str, str | None]:
+    name, sep, version = spec.rpartition("@")
+    if not sep or not name:  # bare name, or a leading-@ scope with no version
+        return spec, None
+    if ":" in version:  # protocol reference, not a version
+        return name, None
+    return name, version or None
+
+
+class BunLockCataloger(Cataloger):
+    """`bun.lock` — Bun's text lockfile (default since Bun 1.2)."""
+
+    id = "js/bun-lock"
+    version = 1
+    matchers = [Matcher(basename="bun.lock")]
+
+    def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
+        text = blob.decode("utf-8", errors="replace")
+        try:
+            doc = json.loads(strip_jsonc_trailing_commas(text))
+        except json.JSONDecodeError as e:
+            raise DetectorFailure(str(e), path=entry.path, detector=self.detector) from e
+        if not isinstance(doc, dict):
+            return
+        proj_dir = dirname_of(entry.path)
+        proj_ref = ref_project(proj_dir)
+        packages = doc.get("packages")
+        if not isinstance(packages, dict):
+            return
+        for key, value in packages.items():
+            # ["name@version", registry, {meta}, "sha512-…"]
+            if not isinstance(value, list) or not value or not isinstance(value[0], str):
+                continue
+            name, version = split_name_version(value[0])
+            if not name:
+                continue
+            integrity = next(
+                (v for v in value[1:] if isinstance(v, str) and v.startswith("sha")), None
+            )
+            decoded = decode_sri(integrity) if integrity else None
+            hashes: tuple[tuple[str, str], ...] = (decoded,) if decoded else ()
+            purl = make_purl("npm", name, version) if version else None
+            claim = ComponentClaim(
+                ctype="library", name=name, version=version, purl=purl, ecosystem="npm",
+                hashes=hashes,
+                attrs=(("bun-key", str(key)),) if str(key) != name else (),
+            )
+            yield Finding(
+                claim=claim,
+                evidence=(
+                    ctx.evidence("lockfile-parse", Tier.LOCKED, entry,
+                                 span=find_span(text, value[0]),
+                                 captured=snippet_at(text, value[0])),
+                ),
+                edges=(
+                    EdgeClaim(kind=EdgeType.DEPENDS_ON, src=proj_ref,
+                              dst=ref_purl(purl) if purl else ref_family("npm", name),
+                              scope=Scope.RUNTIME, direct=False),
+                ),
+            )
+
+
+# -- Deno ------------------------------------------------------------------------
+
+#: A deno.lock key: `@scope/name@1.2.3`, optionally followed by `_peer@ver`
+#: suffixes recording peer resolution. Semver never contains an underscore, so
+#: the version ends at the first one.
+_DENO_KEY_RE = re.compile(r"^(?P<name>@[^/@]+/[^@]+|[^@][^@]*)@(?P<version>[0-9][^_]*)")
+
+
+class DenoLockCataloger(Cataloger):
+    """`deno.lock` — the `jsr` and `npm` sections are the resolved set.
+
+    They are different registries, so they keep different purl types rather
+    than being flattened into one ecosystem.
+    """
+
+    id = "js/deno-lock"
+    version = 1
+    matchers = [Matcher(basename="deno.lock")]
+
+    def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
+        text = blob.decode("utf-8", errors="replace")
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise DetectorFailure(str(e), path=entry.path, detector=self.detector) from e
+        if not isinstance(doc, dict):
+            return
+        proj_ref = ref_project(dirname_of(entry.path))
+        for section, purl_type in (("jsr", "jsr"), ("npm", "npm")):
+            entries = doc.get(section)
+            if not isinstance(entries, dict):
+                continue
+            seen: set[tuple[str, str]] = set()
+            for key, meta in entries.items():
+                m = _DENO_KEY_RE.match(str(key))
+                if not m:
+                    continue
+                name, version = m.group("name"), m.group("version")
+                if (name, version) in seen:
+                    continue  # same package, different peer resolution
+                seen.add((name, version))
+                integrity = (meta or {}).get("integrity") if isinstance(meta, dict) else None
+                hashes: tuple[tuple[str, str], ...] = ()
+                if isinstance(integrity, str) and integrity:
+                    # npm entries carry SRI (`sha512-<b64>`); jsr entries carry a
+                    # bare hex digest.
+                    decoded = decode_sri(integrity) if "-" in integrity else None
+                    if decoded:
+                        hashes = (decoded,)
+                    elif "-" not in integrity:
+                        hashes = (("sha256", integrity),)
+                purl = make_purl(purl_type, name, version)
+                yield Finding(
+                    claim=ComponentClaim(
+                        ctype="library", name=name, version=version, purl=purl,
+                        ecosystem=purl_type, hashes=hashes,
+                    ),
+                    evidence=(
+                        ctx.evidence("lockfile-parse", Tier.LOCKED, entry,
+                                     span=find_span(text, str(key)),
+                                     captured=str(key)[:120]),
+                    ),
+                    edges=(
+                        EdgeClaim(kind=EdgeType.DEPENDS_ON, src=proj_ref, dst=ref_purl(purl),
+                                  scope=Scope.RUNTIME, direct=False),
+                    ),
+                )
+
+
+register(BunLockCataloger())
+register(DenoLockCataloger())

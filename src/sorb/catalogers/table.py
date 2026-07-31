@@ -33,9 +33,13 @@ TOML = "toml"
 @dataclass(frozen=True)
 class LockfileSpec:
     id: str  # "dart/pubspec-lock"
-    match: str  # basename glob
-    format: str  # json|yaml|toml
-    packages_at: str  # mini-path, e.g. "$.packages.*" or "$.package[*]"
+    match: str = ""  # basename glob
+    #: Full-path glob, for formats identified by the directory they sit in
+    #: rather than their own name — `conda-meta/numpy-1.26.4-py312.json` says
+    #: nothing on its own. Exactly one of `match`/`match_glob` is set.
+    match_glob: str = ""
+    format: str = JSON  # json|yaml|toml
+    packages_at: str = "$"  # mini-path, e.g. "$.packages.*"; "$" = the file is one package
     fields: dict[str, str] = field(default_factory=dict)
     # field paths relative to each package node; "@key" = the mapping key
     purl_type: str = ""
@@ -84,6 +88,10 @@ def _walk_path(doc: Any, path: str) -> Iterator[tuple[str | None, Any]]:
 def _get_field(key: str | None, node: Any, path: str) -> str | None:
     if path == "@key":
         return key
+    if path == "@value":
+        # A `name: version` mapping, where the whole value is the field. Common
+        # enough (Unity packages, Perl prereqs) to be worth naming.
+        return str(node) if isinstance(node, str | int | float) else None
     cur = node
     for part in path.lstrip("$.").split("."):
         if not part:
@@ -99,10 +107,14 @@ def _get_field(key: str | None, node: Any, path: str) -> str | None:
 
 class TableCataloger(Cataloger):
     def __init__(self, spec: LockfileSpec):
+        if bool(spec.match) == bool(spec.match_glob):
+            raise ValueError(f"{spec.id}: set exactly one of match / match_glob")
         self.spec = spec
         self.id = spec.id
         self.version = spec.version_pkg
-        self.matchers = [Matcher(basename=spec.match)]
+        self.matchers = [
+            Matcher(glob=spec.match_glob) if spec.match_glob else Matcher(basename=spec.match)
+        ]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
         spec = self.spec
