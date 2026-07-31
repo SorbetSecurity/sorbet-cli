@@ -20,6 +20,7 @@ from typing import Any
 
 from sorb.graph.store import GraphStore
 from sorb.model import (
+    TIER_CONFIDENCE_CAP,
     ComponentClaim,
     Coordinates,
     EdgeType,
@@ -27,6 +28,24 @@ from sorb.model import (
     Finding,
     Tier,
 )
+
+
+def _float_or_none(raw: str | None) -> float | None:
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _tier_or_none(raw: str | None) -> Tier | None:
+    if raw is None:
+        return None
+    try:
+        return Tier.from_label(raw)
+    except KeyError:
+        return None
 
 
 def _imported_rate() -> float:
@@ -131,6 +150,9 @@ class _Ingest:
         extra: dict[str, Any],
         captured: str,
         ecosystem: str | None = None,
+        confidence: float | None = None,
+        tier: Tier | None = None,
+        scope: str | None = None,
     ) -> int:
         if purl and purl.startswith("pkg:"):
             ecosystem = purl[4:].split("/", 1)[0]
@@ -157,8 +179,23 @@ class _Ingest:
             attrs["ecosystem"] = claim.ecosystem
         if licenses:
             attrs["licenses_declared"] = licenses
+        if scope:
+            attrs["scope"] = scope
         if extra:
             attrs["properties"] = extra  # round-trip bag
+
+        # A document sorb itself wrote carries the tier, confidence and scope it
+        # was reconciled with. Restoring them is what makes export → import →
+        # `diff` a no-op instead of a wall of phantom changes; a foreign SBOM
+        # carries no `sorb:` facts and keeps the imported-sbom defaults. The
+        # *evidence record* above is untouched either way — it still says all we
+        # did was read a document — so provenance is never overstated.
+        comp_tier = tier or Tier.DECLARED
+        comp_confidence = (
+            self.rate
+            if confidence is None
+            else min(max(confidence, 0.0), TIER_CONFIDENCE_CAP[comp_tier])
+        )
         cid = self.store.add_component(
             purl=purl,
             ctype=ctype,
@@ -166,8 +203,8 @@ class _Ingest:
             version=version,
             qualifiers={},
             hashes=hashes,
-            confidence=self.rate,
-            tier_cap=int(Tier.DECLARED),
+            confidence=comp_confidence,
+            tier_cap=int(comp_tier),
             attrs=attrs,
         )
         self.store.link_finding(fid, cid)
@@ -235,6 +272,9 @@ def _import_cyclonedx(doc: dict[str, Any], db_path: str | Path, source_name: str
             licenses=licenses,
             extra=extra,
             ecosystem=props.get("sorb:ecosystem"),
+            confidence=_float_or_none(props.get("sorb:confidence")),
+            tier=_tier_or_none(props.get("sorb:tier")),
+            scope=props.get("sorb:scope"),
             captured=json.dumps({k: comp.get(k) for k in ("name", "version", "purl")}),
         )
     for dep in doc.get("dependencies") or []:
@@ -328,6 +368,7 @@ def _import_spdx(doc: dict[str, Any], db_path: str | Path, source_name: str) -> 
             if k not in ("SPDXID", "name", "versionInfo", "externalRefs", "checksums",
                           "licenseDeclared", "licenseConcluded", "downloadLocation")
         }
+        comment = str(pkg.get("comment") or "")
         ingest.add(
             ref=str(pkg.get("SPDXID")) if pkg.get("SPDXID") else None,
             ctype="library",
@@ -337,7 +378,10 @@ def _import_spdx(doc: dict[str, Any], db_path: str | Path, source_name: str) -> 
             hashes=hashes,
             licenses=str(licenses) if licenses else None,
             extra=extra,
-            ecosystem=_sorb_fact(str(pkg.get("comment") or ""), "ecosystem"),
+            ecosystem=_sorb_fact(comment, "ecosystem"),
+            confidence=_float_or_none(_sorb_fact(comment, "confidence")),
+            tier=_tier_or_none(_sorb_fact(comment, "tier")),
+            scope=_sorb_fact(comment, "scope"),
             captured=json.dumps({"name": pkg.get("name"), "versionInfo": pkg.get("versionInfo")}),
         )
     for rel in doc.get("relationships") or []:

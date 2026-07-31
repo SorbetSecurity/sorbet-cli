@@ -128,3 +128,36 @@ def test_cli_query(scanned, tmp_path, monkeypatch) -> None:
     assert "ecosystem" in res.output and "count" in res.output
     bad = runner.invoke(app, ["query", "components where x <", "--run", str(db)])
     assert bad.exit_code == 3  # usage error, position-annotated
+
+
+def test_paths_surface_markers_and_are_shortest_first(tmp_path: Path) -> None:
+    """A marker-gated hop must not render as an unconditional dependency.
+
+    The direct chain is also the one worth reading, so it leads.
+    """
+    from sorb.model import EdgeType
+
+    store = GraphStore.create(tmp_path / "p.db")
+    store.add_source("s1", "dir", ".", {})
+    ids = {
+        name: store.add_component(
+            purl=f"pkg:pypi/{name}@1.0", ctype="library", name=name, version="1.0",
+            qualifiers={}, hashes={}, confidence=0.9, tier_cap=4, attrs={"ecosystem": "pypi"},
+        )
+        for name in ("root", "mid", "leaf")
+    }
+    store.add_edge(EdgeType.DEPENDS_ON, ids["root"], ids["leaf"])
+    store.add_edge(EdgeType.DEPENDS_ON, ids["root"], ids["mid"])
+    store.add_edge(EdgeType.DEPENDS_ON, ids["mid"], ids["leaf"], {"marker": 'extra == "all"'})
+    store.commit()
+    try:
+        result = run_query(store, "paths from pkg:pypi/root@1.0 to pkg:pypi/leaf@1.0")
+        assert result.kind == "paths"
+        assert [len(r["path"]) for r in result.rows] == sorted(
+            len(r["path"]) for r in result.rows
+        ), "shortest path must come first"
+        gated = [r for r in result.rows if len(r["path"]) == 3][0]
+        assert gated["path"][-1]["marker"] == 'extra == "all"'
+        assert result.rows[0]["path"][-1]["marker"] is None  # the direct edge is unconditional
+    finally:
+        store.close()

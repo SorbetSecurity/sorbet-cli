@@ -225,11 +225,23 @@ def _run_paths(store: GraphStore, q: PathsQuery) -> QueryResult:
             if src_matcher(root):
                 rows.append({
                     "path": [
-                        {"kind": step.kind, "label": step.label, "component_id": step.component_id}
+                        {
+                            "kind": step.kind,
+                            "label": step.label,
+                            "component_id": step.component_id,
+                            # The condition the edge into this step carries, if
+                            # any. A marker-gated hop is not an unconditional
+                            # dependency, and rendering it as one reads as a
+                            # claim the graph never made.
+                            "marker": step.edge_attrs.get("marker"),
+                        }
                         for step in path
                     ],
                     "target": comp.display_ref(),
                 })
+    # Shortest first: the most direct provenance is the one worth reading, and
+    # sorting by label alone buries `. → rich` under every long way round.
+    rows.sort(key=lambda r: (len(r["path"]), [s["label"] for s in r["path"]]))
     return QueryResult(kind="paths", columns=["path"], rows=rows)
 
 

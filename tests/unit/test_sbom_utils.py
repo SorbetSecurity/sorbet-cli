@@ -358,3 +358,93 @@ def test_doc_version_increments_and_reissue_reason(tmp_path, monkeypatch) -> Non
 def test_import_rejects_garbage(tmp_path) -> None:
     with pytest.raises(ValueError, match="not a recognized SBOM"):
         import_sbom(b"hello world", tmp_path / "x.sorb.db")
+
+
+def test_export_import_diff_is_a_noop(tmp_path, monkeypatch) -> None:
+    """An SBOM diffed against the store it came from must show no changes.
+
+    `sorb diff v1.cdx.json image:app:2.0 --fail-on-change` is the documented CI
+    gate; if a round-trip drops confidence and scope, the gate fires on every
+    unchanged build.
+    """
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1751500800")
+    store = _scan_project(tmp_path, "rt", {"lodash": "4.17.21", "left-pad": "1.3.0"})
+    try:
+        for label, emit in (("cdx", emit_cyclonedx), ("spdx", emit_spdx)):
+            imported = import_sbom(
+                emit(store, reproducible=True),
+                tmp_path / f"rt-{label}.sorb.db",
+                source_name=f"rt.{label}.json",
+            )
+            try:
+                result = diff_stores(imported, store)
+                assert result.confidence_changes == [], label
+                assert result.scope_changes == [], label
+                assert result.version_changes == [], label
+            finally:
+                imported.close()
+    finally:
+        store.close()
+
+
+def test_diff_does_not_invent_layer_changes_against_an_sbom(tmp_path) -> None:
+    """An SBOM records no layers, so a live image's layers are not "added".
+
+    Reporting them flips `--fail-on-change` on every unchanged image build.
+    """
+    from sorb.model import EdgeType  # noqa: F401  (kept local to this case)
+
+    with_layers = GraphStore.create(tmp_path / "img.db")
+    with_layers.add_source("s1", "oci", "img", {})
+    with_layers.add_layer("sha256:" + "aa" * 32, "s1", 0, "ADD rootfs /")
+    with_layers.commit()
+    without = GraphStore.create(tmp_path / "doc.db")
+    without.add_source("s1", "sbom", "img.cdx.json", {})
+    without.commit()
+    try:
+        assert diff_stores(without, with_layers).layers_added == []
+        assert diff_stores(with_layers, without).layers_removed == []
+        # two real images still diff their layers
+        other = GraphStore.create(tmp_path / "img2.db")
+        other.add_source("s1", "oci", "img2", {})
+        other.add_layer("sha256:" + "bb" * 32, "s1", 0, "ADD rootfs /")
+        other.commit()
+        try:
+            assert diff_stores(with_layers, other).layers_added == ["sha256:" + "bb" * 32]
+        finally:
+            other.close()
+    finally:
+        with_layers.close()
+        without.close()
+
+
+def test_verify_refuses_contradictory_subject_arguments(tmp_path) -> None:
+    """Passing both --sbom and --subject-digest for different artifacts is an error.
+
+    Silently preferring one reports "verification passed" for a subject the
+    caller never asked about.
+    """
+    from sorb.emit.signing import attest, generate_keypair, verify
+
+    key_path, pub_path = generate_keypair(tmp_path / "keys")
+    sbom = json.dumps({"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}).encode()
+    subject = "sha256:" + "ab" * 32
+    envelope = attest(
+        sbom, subject_name="acme/api", subject_digest=subject,
+        private_key_pem=key_path.read_bytes(),
+    )
+    steps = verify(
+        envelope,
+        public_key_pem=pub_path.read_bytes(),
+        expected_subject_digest=subject,
+        sbom_bytes=b"a completely different artifact",
+    )
+    assert steps[-1].name == "subject-binding" and not steps[-1].ok
+
+    # ...and the honest single-argument forms still pass.
+    assert all(
+        s.ok
+        for s in verify(
+            envelope, public_key_pem=pub_path.read_bytes(), expected_subject_digest=subject
+        )
+    )

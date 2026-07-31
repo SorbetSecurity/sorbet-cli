@@ -9,6 +9,7 @@ conflicts annotated) → EDGES (merge; direct/transitive; scope propagation)
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +31,18 @@ from sorb.model import (
 SINGLE_VERSION_ECOS = {"pypi", "deb", "apk", "alpm", "conda", "composer", "pub"}
 
 _ORPHAN_MODIFIER = 0.8
+
+#: A marker gating a dependency behind one of the *dependent's* own extras
+#: (``extra == "all"``). Environment markers (``python_version < "3.11"``,
+#: ``sys_platform == "win32"``) say *where* a real dependency applies and are
+#: deliberately not matched here — those edges stay in the reachability walk.
+_EXTRA_MARKER_RE = re.compile(r"\bextra\s*==")
+
+
+def _extras_gated(edge_attrs: dict[str, Any]) -> bool:
+    """True when this edge only exists if the consumer asked for an extra."""
+    marker = edge_attrs.get("marker")
+    return marker is not None and _EXTRA_MARKER_RE.search(str(marker)) is not None
 
 
 @dataclass
@@ -401,21 +414,33 @@ def reconcile(
         if kind == EdgeType.DEPENDS_ON.value:
             adj[src].append((dst, attrs))
 
-    runtime_reach: set[int] = set()
-    dev_reach: set[int] = set()
+    def reach(roots: set[int], *, follow_extras: bool) -> tuple[set[int], set[int]]:
+        """Everything DEPENDS_ON-reachable from `roots`, and what was gated off.
 
-    def bfs(start_nodes: list[tuple[int, str]], target: set[int], want_dev: bool) -> None:
-        frontier = [n for n, s in start_nodes if (s == "dev") == want_dev]
-        seen = set(frontier)
+        Unless `follow_extras`, an extras-gated edge is not traversed: a package
+        listing a test tool under ``extra == "all"`` does not make that tool a
+        dependency of a project that never requested the extra. Those targets
+        come back as the second set so they can be scoped optional rather than
+        silently promoted to whatever reached them.
+        """
+        reached: set[int] = set(roots)
+        gated: set[int] = set()
+        frontier = list(roots)
         while frontier:
             node = frontier.pop()
-            for nxt, _attrs in adj.get(node, ()):
-                if nxt not in seen:
-                    seen.add(nxt)
-                    target.add(nxt)
-                    frontier.append(nxt)
+            for nxt, eattrs in adj.get(node, ()):
+                if not follow_extras and _extras_gated(eattrs):
+                    gated.add(nxt)
+                    continue
+                if nxt in reached:
+                    continue
+                reached.add(nxt)
+                frontier.append(nxt)
+        return reached, gated
 
-    project_children: list[tuple[int, str]] = []
+    runtime_roots: set[int] = set()
+    dev_roots: set[int] = set()
+    optional_roots: set[int] = set()
     build_reach: set[int] = set()
     conditional_only: dict[int, bool] = {}
     for pnode in proj_node.values():
@@ -428,11 +453,19 @@ def reconcile(
             if raw_scope == "build":
                 build_reach.add(child)
                 continue
-            s = "dev" if raw_scope in ("dev", "test") else "runtime"
-            project_children.append((child, s))
-            (dev_reach if s == "dev" else runtime_reach).add(child)
-    bfs(project_children, runtime_reach, want_dev=False)
-    bfs(project_children, dev_reach, want_dev=True)
+            if raw_scope == "optional":
+                # An extra nobody asked for is not a runtime dependency: it is
+                # declared as available, not as required.
+                optional_roots.add(child)
+                continue
+            (dev_roots if raw_scope in ("dev", "test") else runtime_roots).add(child)
+
+    runtime_reach, runtime_gated = reach(runtime_roots, follow_extras=False)
+    dev_reach, dev_gated = reach(dev_roots, follow_extras=False)
+    # Opting into an extra does pull in that extra's whole subtree, so the
+    # optional walk follows every edge — it is already inside the conditional.
+    optional_reach, _ = reach(optional_roots | runtime_gated | dev_gated, follow_extras=True)
+    extras_gated = (runtime_gated | dev_gated) - runtime_reach - dev_reach
 
     for cid, info in cid_info.items():
         if cid in runtime_reach:
@@ -441,13 +474,15 @@ def reconcile(
             scope = "dev"
         elif cid in build_reach or info["ctype"] == "build-tool":
             scope = "build"
+        elif cid in optional_reach:
+            scope = "optional"
         elif info["ctype"] in ("os-package", "application"):
             scope = "runtime"
         else:
             scope = None
         if scope:
             info["attrs"]["scope"] = scope
-        if conditional_only.get(cid):
+        if conditional_only.get(cid) or cid in extras_gated:
             info["attrs"]["conditional"] = True
 
     # ---- 5. DRIFT (per family, across tiers) -----------------------------------
@@ -466,10 +501,11 @@ def reconcile(
         installedish = bool(all_tiers & {Tier.INSTALLED, Tier.OBSERVED})
         name = cid_info[cids[0]]["name"]
         subject = name
-        # build tooling and marker-conditional deps are not drift
+        # build tooling, extras and marker-conditional deps are not drift: an
+        # extra nobody installed is the normal case, not a missing dependency.
         exempt = all(
             cid_info[cid]["ctype"] == "build-tool"
-            or cid_info[cid]["attrs"].get("scope") == "build"
+            or cid_info[cid]["attrs"].get("scope") in ("build", "optional")
             or cid_info[cid]["attrs"].get("conditional")
             or cid_info[cid]["attrs"].get("optional") == "true"
             for cid in cids

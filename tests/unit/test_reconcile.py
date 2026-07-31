@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from pathlib import Path
 
 from sorb.core.reconcile import reconcile
@@ -11,8 +12,12 @@ from sorb.graph.store import GraphStore
 from sorb.model import (
     ComponentClaim,
     Coordinates,
+    EdgeClaim,
+    EdgeType,
     EvidenceRecord,
     Finding,
+    ProjectClaim,
+    Scope,
     Tier,
 )
 
@@ -139,4 +144,83 @@ def test_versionless_declared_merges_into_single_concrete(tmp_path: Path) -> Non
     assert len(comps) == 1
     assert comps[0].version == "4.17.21"
     assert len(store.evidence_for_component(comps[0].id)) == 2
+    store.close()
+
+
+# -- scope propagation ------------------------------------------------------------------
+
+
+def _scope_store(tmp_path: Path, findings: list[Finding], name: str) -> GraphStore:
+    store = GraphStore.create(tmp_path / f"{name}.db")
+    store.set_meta("subject", "test")
+    fids = [(store.add_finding(f), f) for f in findings]
+    reconcile(store, fids, [ProjectClaim(path=".", name="proj", kind="python")], "s1")
+    return store
+
+
+def _scopes(store: GraphStore) -> dict[str, str | None]:
+    return {c.name: c.attrs.get("scope") for c in store.components()}
+
+
+def _dep(src: str, dst: str, **kw: object) -> EdgeClaim:
+    return EdgeClaim(kind=EdgeType.DEPENDS_ON, src=src, dst=dst, **kw)  # type: ignore[arg-type]
+
+
+def test_optional_dependency_is_not_scoped_runtime(tmp_path: Path) -> None:
+    """`[project.optional-dependencies]` declares availability, not a requirement.
+
+    Scoping an extra `runtime` puts every dev tool a project lists under an
+    extra into `--scope runtime` output.
+    """
+    store = _scope_store(
+        tmp_path,
+        [
+            replace(
+                _finding("typer", "0.12.0", Tier.INSTALLED, technique="installed-state"),
+                edges=(_dep("project:.", "family:pypi/typer", scope=Scope.RUNTIME, direct=True),),
+            ),
+            replace(
+                _finding("mypy", "1.10.0", Tier.INSTALLED, technique="installed-state"),
+                edges=(_dep("project:.", "family:pypi/mypy", scope=Scope.OPTIONAL, direct=True),),
+            ),
+        ],
+        "optional",
+    )
+    scopes = _scopes(store)
+    assert scopes["typer"] == "runtime"
+    assert scopes["mypy"] == "optional"
+    store.close()
+
+
+def test_extras_gated_edge_does_not_promote_to_runtime(tmp_path: Path) -> None:
+    """`idna[all]` naming a test tool must not make it a runtime dependency.
+
+    An environment marker is different: it says *where* a real dependency
+    applies, so it keeps propagating.
+    """
+    idna = replace(
+        _finding("idna", "3.18", Tier.INSTALLED, technique="installed-state"),
+        edges=(
+            _dep("project:.", "family:pypi/idna", scope=Scope.RUNTIME, direct=True),
+            _dep("purl:pkg:pypi/idna@3.18", "family:pypi/pytest", marker='extra == "all"'),
+            _dep("purl:pkg:pypi/idna@3.18", "family:pypi/anyio", marker='python_version < "3.11"'),
+        ),
+    )
+    store = _scope_store(
+        tmp_path,
+        [
+            idna,
+            _finding("pytest", "8.3.2", Tier.INSTALLED, technique="installed-state"),
+            _finding("anyio", "4.4.0", Tier.INSTALLED, technique="installed-state"),
+        ],
+        "extras",
+    )
+    scopes = _scopes(store)
+    assert scopes["idna"] == "runtime"
+    assert scopes["pytest"] == "optional"  # gated behind an extra nobody requested
+    assert scopes["anyio"] == "runtime"  # environment marker: still a real dependency
+    conditional = {
+        c.name: c.attrs.get("conditional") for c in store.components()
+    }
+    assert conditional["pytest"] is True
     store.close()

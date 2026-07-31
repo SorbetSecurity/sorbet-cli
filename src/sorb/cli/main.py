@@ -632,7 +632,12 @@ def verify(
     artifact: str = typer.Argument(..., help="Attestation (.att) or signature bundle (.sig)"),
     key: str = typer.Option(..., "--key", help="Public key PEM (pinned-key identity policy)"),
     sbom: str | None = typer.Option(
-        None, "--sbom", help="The signed file — required for detached bundles, and binds an attestation to it"
+        None,
+        "--sbom",
+        help="The artifact you hold: the signed file for a detached bundle, or the "
+        "subject an attestation must be about. Use --subject-digest instead when "
+        "you have the digest but not the bytes; passing both is an error unless "
+        "they agree",
     ),
     subject_digest: str | None = typer.Option(None, "--subject-digest"),
     lineage: str | None = typer.Option(
@@ -874,7 +879,10 @@ def _render_query_table(result) -> None:  # type: ignore[no-untyped-def]
         return
     if result.kind == "paths":
         for row in result.rows:
-            chain = " → ".join(step["label"] for step in row["path"])
+            chain = " → ".join(
+                f"{step['label']} [{step['marker']}]" if step.get("marker") else step["label"]
+                for step in row["path"]
+            )
             typer.echo(f"  {chain}")
         return
     cols = list(result.rows[0].keys()) if result.kind == "aggregation" else result.columns

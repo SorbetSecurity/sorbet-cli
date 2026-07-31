@@ -255,6 +255,20 @@ def verify(
     want: str | None = None
     if expected_subject_digest is not None:
         want = expected_subject_digest.partition(":")[2] or expected_subject_digest
+        # Both were supplied and they name different artifacts. Silently
+        # preferring one would report "verification passed" for a subject the
+        # caller never asked about, so the contradiction is the answer.
+        if sbom_bytes is not None and hashlib.sha256(sbom_bytes).hexdigest() != want:
+            steps.append(
+                VerifyStep(
+                    "subject-binding",
+                    False,
+                    f"--subject-digest {want[:16]}… and --sbom "
+                    f"({hashlib.sha256(sbom_bytes).hexdigest()[:16]}…) name different "
+                    "artifacts — pass only the one you mean to bind against",
+                )
+            )
+            return steps
     elif sbom_bytes is not None:
         # Holding the artifact makes it the subject to bind against: a validly
         # signed envelope that describes something else is not evidence about

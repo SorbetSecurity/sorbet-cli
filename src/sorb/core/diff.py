@@ -80,10 +80,14 @@ def diff_stores(a: GraphStore, b: GraphStore) -> DiffResult:
         if abs(ca.confidence - cb.confidence) >= 0.05:
             result.confidence_changes.append((cb.name, ca.confidence, cb.confidence))
 
+    # Only diff layers when both sides actually have them. An imported SBOM
+    # records no layers at all, so subtracting would report every layer of the
+    # live side as "added" — that is missing information, not a change.
     layers_a = {la["digest"] for la in a.layers()}
     layers_b = {lb["digest"] for lb in b.layers()}
-    result.layers_added = sorted(layers_b - layers_a)
-    result.layers_removed = sorted(layers_a - layers_b)
+    if layers_a and layers_b:
+        result.layers_added = sorted(layers_b - layers_a)
+        result.layers_removed = sorted(layers_a - layers_b)
     return result
 
 
