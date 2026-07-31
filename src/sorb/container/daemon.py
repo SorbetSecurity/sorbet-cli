@@ -18,7 +18,11 @@ import httpx
 
 from sorb.errors import TargetError
 
-_API_VERSION = "v1.43"
+#: Fallback when the daemon will not say which API versions it speaks. Engines
+#: reject anything below their own MinAPIVersion, so a hardcoded pin ages into a
+#: hard failure: Docker 29 answers 400 to every v1.43 request. The version is
+#: negotiated against the daemon instead, and this is only the last resort.
+_FALLBACK_API_VERSION = "v1.43"
 
 
 def _docker_socket() -> str:
@@ -47,9 +51,31 @@ class DaemonClient:
                     "(is the daemon running?)"
                 )
             transport = httpx.HTTPTransport(uds=socket_path)
-        self._client = httpx.Client(
-            transport=transport, base_url=f"http://engine/{_API_VERSION}", timeout=60.0
-        )
+        # Unversioned base: the negotiated prefix is prepended per request.
+        self._client = httpx.Client(transport=transport, base_url="http://engine", timeout=60.0)
+        self._prefix: str | None = None
+
+    def _api_prefix(self) -> str:
+        """The version prefix this daemon accepts, asked once and remembered.
+
+        `/version` is itself unversioned, so it answers on every engine. Asking
+        for the daemon's own API version keeps old and new engines working;
+        pinning one number cannot.
+        """
+        if self._prefix is not None:
+            return self._prefix
+        prefix = f"/{_FALLBACK_API_VERSION}"
+        try:
+            resp = self._client.get("/version")
+            if resp.status_code < 400:
+                doc = json.loads(resp.content)
+                reported = str(doc.get("ApiVersion") or "").strip()
+                if reported:
+                    prefix = f"/v{reported.lstrip('v')}"
+        except (httpx.HTTPError, ValueError):
+            pass  # unreachable or unparseable: fall back, the call below reports it
+        self._prefix = prefix
+        return prefix
 
     @classmethod
     def for_flavor(
@@ -60,7 +86,7 @@ class DaemonClient:
 
     def _get(self, path: str) -> httpx.Response:
         try:
-            resp = self._client.get(path)
+            resp = self._client.get(f"{self._api_prefix()}{path}")
         except httpx.HTTPError as e:
             raise TargetError(f"engine API request failed ({path}): {e}") from e
         if resp.status_code == 404:

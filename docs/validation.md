@@ -1,27 +1,55 @@
 # Validation
 
 What has been checked against real software, how, and what has not. Every
-"validated" row below was run against a real artifact, not a fixture. Numbers
-are from a macOS arm64 host; treat them as evidence that a path works, not as
-a benchmark.
+"validated" row below was run against a real artifact, not a fixture. Treat the
+numbers as evidence that a path works, not as a benchmark.
+
+Host coverage: source, container and binary rows are from a macOS arm64 host;
+the Linux rows from containers on a Linux kernel (Docker Desktop's LinuxKit VM,
+native `linux/arm64` and `linux/amd64` under emulation); the Windows rows from a
+real Windows image parsed registry-direct, with no Windows machine involved.
+No live Windows host has been used at all — see Pending.
 
 The fixture suites (`tests/`) are the regression net. This document is about
 the wider question those suites cannot answer on their own: does `sorb` tell
 the truth about software it has never seen?
 
+## Status
+
+| | |
+| --- | --- |
+| Ecosystems, monorepos, container images | Validated against real artifacts, with ground-truth parity where a package manager could be asked |
+| Linux-specific paths | Validated: `host://`, `/proc` observation, and the namespace+seccomp sandbox including a network escape test |
+| Windows artifacts | Validated at artifact level: PE VERSIONINFO and registry hives, both differentialed against third-party parsers |
+| External conformance | CycloneDX 1.6 validated against the official schema; SPDX not yet |
+| Live Windows host, podman/containerd, mobile, `disk://` (dissect), WASM, data packs, Sigstore, fleet at scale | Unproven — see Pending |
+| Linux sandbox filesystem confinement | A known limitation, not a coverage gap — see Pending |
+
+The last real-artifact round found six defects that fixture suites could not
+have caught: rpm databases unreadable on every Fedora/Rocky image, a platform
+silently skipped by `--all-platforms`, two crashes that killed a whole scan, a
+CycloneDX schema violation on every certificate, and `docker:`/`container://`
+broken outright against a current daemon. Each is now covered by a regression
+test that fails without its fix.
+
 ## Method
 
-Three independent checks, because each catches what the others miss.
+Four independent checks, because each catches what the others miss.
 
 | Check | What it proves | How |
 | --- | --- | --- |
 | **Evidence audit** | No hallucination: every emitted component is provable from bytes on disk | Re-open the file each component's evidence cites, and re-prove the name, version and line independently of the cataloger that produced them |
-| **Differential** | Recall and identity: we do not miss what others find, and we name things the same way | Compare purls against `syft` on the same target; every disagreement is triaged in `tests/differential/ledger.json` |
-| **Package-manager ground truth** | Installed state is real: what we report matches what the tool actually installed | Compare against `npm ls --all`, pip's `dist-info` records, and `nm -D` for binary symbols |
+| **Differential** | Recall and identity: we do not miss what others find, and we name things the same way | Compare purls against `syft` on the same target; every disagreement is triaged in `tests/differential/ledger.json`. Format-specific parsers are differentialed against their own third parties — `pefile` for PE, `python-registry` for hives |
+| **Package-manager ground truth** | Installed state is real: what we report matches what the tool actually installed | Compare against `rpm -qa`, `dpkg-query`, `npm ls --all`, pip's `dist-info` records, and `nm -D` for binary symbols |
+| **External conformance** | The output is the format we claim, judged by someone else's rules | Validate emitted SBOMs against the format's official published schema, not our own validator |
 
-The evidence audit is the strongest of the three. A differential comparison
-only shows where two tools disagree; it cannot tell you that both are wrong.
+The evidence audit is the strongest of the four. A differential comparison only
+shows where two tools disagree; it cannot tell you that both are wrong.
 Re-deriving each claim from the cited bytes can.
+
+External conformance is the cheapest and was the longest missing: sorb's own
+`validate` passed documents that the official CycloneDX schema rejected on every
+certificate component.
 
 Two things a naive text audit gets wrong, and any re-implementation must
 handle: certificate subjects live in DER inside base64, so they are real
@@ -94,6 +122,64 @@ Registry-direct pulls, no daemon.
 | `node:20-alpine` | apk | 360 including 192 npm | |
 | `nginx:1.27-alpine` | apk | 217 | |
 | `gcr.io/distroless/static-debian12` | distroless | 146 from 4 deb records | Distroless yields a real inventory |
+| `fedora:41` | rpm (sqlite) | 125 rpm + 379 certificates | **125/125 name+version parity with `rpm -qa`**, 0 missing, 0 extra |
+| `rockylinux:9` | rpm (sqlite) | 141 rpm + 354 certificates | 141/141 against `rpm -qa` |
+| `mcr.microsoft.com/windows/nanoserver:ltsc2022` | Windows | 122 from 3,604 files | See *Windows artifacts* below |
+
+Real rpm images were what exposed the sqlite reader failing on every one of
+them: an actual `rpmdb.sqlite` is in WAL mode, and SQLite cannot use WAL
+journaling on a deserialized in-memory database. The synthesized fixtures used
+`conn.serialize()`, which produces a rollback-journal database, so no fixture
+could have caught it. Every Fedora/Rocky image silently reported **zero** rpm
+packages behind a single contained `analysis-gap`.
+
+Multi-arch fan-out is exercised against `alpine:3.20`: 8 index entries, 8
+distinct images. It previously produced 7 — `linux/arm/v6` and `linux/arm/v7`
+both collapsed to `linux/arm`, so one was scanned twice and the other never.
+
+## Windows artifacts
+
+No Windows host was involved. `sorb` pulls registry-direct and parses bytes, so
+a real Windows image can be read from any OS — which is what makes these rows
+checkable at all.
+
+| Property | Method | Result |
+| --- | --- | --- |
+| PE VERSIONINFO | 4 real `System32` DLLs compared against `pefile` | **4/4 exact** on ProductName + ProductVersion |
+| Registry hives | real `SYSTEM` hive vs `python-registry` | **58/58 exact** (Start ∈ boot/system/auto), 0 false positives |
+| Windows path handling | 3,604-file layer, `Files/` and `UtilityVM/Files/` prefixes | 0 analysis gaps; the two trees reconcile into one component set |
+
+The image also surfaced a scan-killing crash: `mcr.microsoft.com` attaches
+binary referrer blobs, and `json.loads` on non-UTF-8 bytes raises
+`UnicodeDecodeError`, which is *not* a `JSONDecodeError` — so it escaped the
+handler and aborted the whole scan.
+
+## Linux-specific paths
+
+Run inside containers on a Linux kernel (Docker Desktop's LinuxKit VM, both
+`linux/amd64` under emulation and native `linux/arm64`).
+
+| Property | Method | Result |
+| --- | --- | --- |
+| `host://` on Linux | `python:3.13-slim`, compared against `dpkg-query` | **87/87 name+version**, 0 missing, 0 extra |
+| `/proc` runtime observation | same scan | 6 observed-tier components (kernel + modules) |
+| `--resolve=native` sandbox | PEP 517 build inside namespaces + seccomp, native arm64 | Resolved 2 dependencies at locked tier — unshare, uid/gid map, tmpfs and the seccomp filter all applied |
+| Network escape | build backend attempting an outbound socket | **Denied** in the sandbox; reached with `--dangerously-no-sandbox` (control) |
+| Sandbox unavailable | default Docker seccomp, which blocks `unshare(2)` | Refused and degraded to `SORB-W015`; the build tool never runs unconfined |
+
+Two caveats worth stating plainly:
+
+- **Filesystem writes outside the scratch home are not denied.** The Linux
+  sandbox unshares user/mount/net namespaces, mounts a private tmpfs over the
+  scratch home, applies rlimits and a seccomp *blocklist* of ten syscalls. It
+  does not remount the root filesystem read-only, so a build backend can still
+  write to `/tmp`, `$HOME`, or the project tree — verified by a build script
+  that did exactly that. "Deny-by-default" in the README describes the network
+  and the scratch home, not the whole filesystem.
+- On `linux/amd64` under Rosetta emulation the seccomp filter is rejected with
+  `EINVAL` (BPF filters are architecture-specific). This is an emulation
+  artifact, not a sandbox defect: the same code applies the filter successfully
+  on native `linux/arm64`. Either way the failure is refusal, not exposure.
 
 Warm-cache scans after the referrers-caching fix: alpine 0.45s, nginx 0.69s,
 node 1.04s, python 1.10s.
@@ -119,6 +205,8 @@ Every documented example in `docs/usage.md` was run verbatim.
 
 | Area | Validated |
 | --- | --- |
+| External conformance | CycloneDX **1.6 official JSON schema**: 4 real SBOMs (repo, `alpine:3.20`, `fedora:41`, nanoserver — 1,000 components total) validate with **0 errors**. Before this, every certificate component was invalid: `certificateProperties` is closed to 8 fields and `certificateFingerprint` is not one of them (645 violations). The fingerprint now rides in `hashes` |
+| Daemon & runtime sources | `docker:` and `container://` against Docker 29.2 — both produce a byte-identical component set to the registry-direct scan of the same image. Required negotiating the engine API version: the hardcoded `v1.43` is below Docker 29's `MinAPIVersion` of 1.44, so every request returned 400 |
 | Commands | `scan`, `explain`, `explain-warning`, `query`, `convert`, `merge`, `diff`, `validate`, `fleet`, `config`, `cache stats/prune/clear`, `db status`, `accel`, `bench`, `sign`, `attest`, `verify`, `trace`, `snapshot`, `ui`, `serve`, `self update` |
 | Output formats | `cyclonedx-json`, `spdx-json`, `spdx3-json`, `sorb`, `table`, `tree`, `summary` |
 | Query DSL | Comparisons, globs, `and`/`or`, `count by`, `paths from ... to ...`, `-o json`, `--run` |
@@ -151,29 +239,30 @@ Every documented example in `docs/usage.md` was run verbatim.
 
 ## Pending
 
-Not yet validated, with the reason. Nothing here is known to be broken; it is
-unproven.
+Not yet validated, with the reason. These are unproven rather than broken, with
+one exception stated as such: the Linux sandbox does not confine filesystem
+writes outside the scratch home. That one is a measured limitation, not a gap in
+coverage.
 
 | Scenario | Why it is pending |
 | --- | --- |
-| **Windows, end to end** | No Windows host available. Affects path handling, the registry cataloger against a live hive, and PE-specific paths. `--resolve=native` deliberately refuses on Windows |
-| **Linux sandbox (`--resolve=native`)** | Only the macOS Seatbelt path was exercised. The namespace and seccomp path needs a Linux host, including the escape tests |
-| **Native drivers beyond PEP 517** | Maven, Gradle, npm, pnpm, Swift, sbt and Bazel drivers are unit-tested on their parsers only; none has been run against a real project with its toolchain installed |
-| **PE binaries** | No real Windows executable or DLL was parsed. PE and Mach-O still do not extract symbols; only ELF and WASM do |
+| **Windows, live host** | Artifact parsing is now validated against a real Windows image (PE VERSIONINFO, registry hives, layer path handling). What remains unproven needs an actual Windows machine: path handling on a live NTFS filesystem, the registry cataloger against a mounted live hive, and that `--resolve=native` refuses there as designed |
+| **Linux sandbox, filesystem confinement** | Namespaces, seccomp and network denial are validated. The root filesystem is *not* remounted read-only, so a build tool can write outside the scratch home — verified, and left as-is deliberately: making it read-only would break build tools that legitimately write to caches and `/tmp`, so it is a policy decision rather than a bug fix |
+| **Linux sandbox on x86-64** | The namespace+seccomp path is proven on native `linux/arm64`. On `linux/amd64` it could only be run under Rosetta emulation, where the kernel rejects the (architecture-specific) BPF filter. Needs a native x86-64 Linux host |
+| **Native drivers beyond PEP 517** | Maven, Gradle, npm, pnpm, Swift, sbt and Bazel drivers are unit-tested on their parsers only; none has been run against a real project with its toolchain installed. PEP 517 is now exercised end to end inside the Linux sandbox |
+| **PE symbols** | Real PE files are now parsed and their VERSIONINFO checked against `pefile`. PE and Mach-O still do not extract *symbols*; only ELF and WASM do |
+| **`podman:` and `containerd:` sources** | `docker:` and `container://` are validated against a live Docker 29.2 daemon. The podman and containerd paths share the client but were not exercised against those runtimes |
+| **SPDX external conformance** | CycloneDX 1.6 output is validated against the official schema. The SPDX 2.3 and 3.0 emitters have not been checked against an external SPDX validator, and the NTIA/BSI profiles remain self-implemented |
 | **Real WASM modules** | The ABI is proven with generated guests. No module built from Rust or TinyGo has been loaded |
 | **Mobile artifacts** | No real APK, AAB or IPA. DEX class-tree extraction is a known depth gap |
 | **`disk://` with the `dissect` backend** | Only the in-process FAT path is covered. ext4, XFS, Btrfs, NTFS, qcow2, VMDK and LVM are untested against real images |
-| **`host://` on Linux and Windows** | Exercised on macOS only (4394 components across 14 ecosystems). The `/proc` runtime-observation path needs a Linux host |
-| **Daemon and runtime sources** | `docker:`, `podman:`, `containerd:` and `container://` were not exercised against live daemons; only registry, OCI layout and archive paths were |
-| **`--all-platforms`** | No multi-arch index fanned out |
-| **RPM-based images** | The rpm readers were exercised on synthesized fixtures and Dockerfile predictions, not on a real Fedora or Rocky image |
+| **`host://` on Windows** | Exercised on macOS (4394 components across 14 ecosystems) and Linux (87/87 dpkg parity, `/proc` observation). A Windows host remains untested |
 | **Signature data packs** | `sorb db update` is tested with generated packs; no real signature pack has been built and installed, so the fingerprint engines have not run against a real corpus |
 | **Remote cache** | The reference server is driven in-process. No multi-machine CI fleet has shared a cache |
 | **gRPC plugin against a real server** | Only a fake channel. Needs a service implementing `plugin_v1.proto` |
 | **Sigstore keyless verification** | Not implemented. `verify` reports the transparency-log step as skipped |
 | **`sorb self update` with a real bundle** | Verified with synthetic bundles. No PyInstaller bundle has been produced and swapped in |
 | **`sorb-accel`** | The Rust crate is a scaffold. The self-check that would adopt it is tested with a Python stand-in |
-| **External conformance** | NTIA and BSI TR-03183 profiles are self-implemented. Output has not been checked against an external CycloneDX or SPDX validator |
 | **Fleet at scale** | Aggregation is unit-tested and run over a handful of stores; not against hundreds of hosts |
 | **Coverage-guided fuzzing** | Only the deterministic in-process smoke fuzz runs. OSS-Fuzz integration is committed but has not been run |
 | **The evidence auditor itself** | Lives outside the repository. It should land in `tests/` so the no-hallucination property is checked every run rather than by hand |
@@ -185,6 +274,31 @@ The differential comparison is wired up:
 ```bash
 python tests/differential/differential_harness.py --refresh   # re-record competitor output
 pytest tests/test_accuracy_gates.py -k differential            # every delta must be in the ledger
+```
+
+Real-artifact checks from the rounds above, each needing only Docker and
+network:
+
+```bash
+# rpm ground truth (expects exact parity)
+docker run --rm --platform linux/amd64 fedora:41 rpm -qa | wc -l
+sorb scan image:fedora:41 -o summary
+
+# multi-arch: 8 index entries must yield 8 distinct images
+sorb scan image:alpine:3.20 --all-platforms -o summary
+
+# Windows artifacts, no Windows host required
+sorb scan image:mcr.microsoft.com/windows/nanoserver:ltsc2022 \
+  --platform windows/amd64 -o summary
+
+# Linux host inventory vs dpkg, inside a container
+docker run --rm -v "$PWD:/w" -w /w python:3.13-slim bash -c \
+  'pip install -qe . && sorb scan host:// -o summary && dpkg-query -W | wc -l'
+
+# external CycloneDX conformance
+pip install jsonschema
+curl -sO https://raw.githubusercontent.com/CycloneDX/specification/1.6/schema/bom-1.6.schema.json
+sorb scan . -o cyclonedx-json -f out.json   # then validate out.json against it
 ```
 
 The evidence audit is not yet committed (see Pending). Its logic: for each

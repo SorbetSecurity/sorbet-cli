@@ -10,6 +10,7 @@ are allowlisted via ``--allow-net``.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import subprocess
@@ -172,23 +173,86 @@ def _rlimit_preexec(spec: SandboxSpec) -> Callable[[], None] | None:
     return apply
 
 
+def _reporting_preexec(preexec: Callable[[], None], write_fd: int) -> Callable[[], None]:
+    """Wrap the sandbox setup so the child reports *which* step failed.
+
+    CPython collapses everything a `preexec_fn` raises into the opaque
+    "Exception occurred in preexec_fn.", which cannot tell a user whether the
+    kernel blocked unshare(2), the uid_map write, or the tmpfs mount. The child
+    writes its own reason down a pipe before re-raising.
+    """
+
+    def run() -> None:
+        try:
+            preexec()
+        except BaseException as exc:  # noqa: BLE001 — reported, then re-raised
+            try:
+                os.write(write_fd, f"{type(exc).__name__}: {exc}".encode()[:512])
+            except OSError:
+                pass
+            raise
+
+    return run
+
+
+def _preexec_reason(read_fd: int, write_fd: int) -> str:
+    """Whatever the child managed to report before it died."""
+    if read_fd == -1:
+        return ""
+    # The parent's copy of the write end has to go first, or the read blocks
+    # waiting on a writer that is this very process.
+    with contextlib.suppress(OSError):
+        os.close(write_fd)
+    try:
+        return os.read(read_fd, 512).decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
 def _popen(
     argv: list[str],
     spec: SandboxSpec,
     preexec: Callable[[], None] | None = None,
 ) -> BrokerResult:
+    err_r = err_w = -1
+    wrapped = preexec
+    if preexec is not None:
+        err_r, err_w = os.pipe()
+        os.set_inheritable(err_w, True)
+        wrapped = _reporting_preexec(preexec, err_w)
     try:
-        proc = subprocess.Popen(
-            argv,
-            cwd=spec.project_root,
-            env=spec.child_env(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
-            preexec_fn=preexec,  # noqa: PLW1509
-        )
-    except OSError as e:
-        return BrokerResult(exit_code=127, stdout=b"", stderr=str(e).encode())
+        try:
+            proc = subprocess.Popen(
+                argv,
+                cwd=spec.project_root,
+                env=spec.child_env(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
+                preexec_fn=wrapped,  # noqa: PLW1509
+                pass_fds=(err_w,) if err_w != -1 else (),
+            )
+        except OSError as e:
+            return BrokerResult(exit_code=127, stdout=b"", stderr=str(e).encode())
+        except subprocess.SubprocessError as e:
+            # The sandbox (namespaces, mounts, seccomp) is built by `preexec_fn`
+            # in the forked child, and CPython reports a failure there as
+            # SubprocessError — not OSError — so it escaped and killed the whole
+            # scan. That is the ordinary case of running inside a container
+            # whose seccomp policy blocks unshare(2), i.e. most CI. No sandbox
+            # means the build tool does not run: refused, degraded to a warning,
+            # never unconfined.
+            detail = (
+                f"sandbox could not be established: {_preexec_reason(err_r, err_w) or e}. "
+                "Refusing to run the build tool unconfined; falling back to "
+                "static analysis (--dangerously-no-sandbox overrides, unsafely)"
+            )
+            return BrokerResult(exit_code=127, stdout=b"", stderr=detail.encode())
+    finally:
+        for fd in (err_r, err_w):
+            if fd != -1:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
     try:
         stdout, stderr = proc.communicate(timeout=spec.timeout_s)
         return BrokerResult(exit_code=proc.returncode, stdout=stdout, stderr=stderr)

@@ -111,11 +111,35 @@ def _read_value(store: bytes, typ: int, offset: int, count: int) -> object:
 # -- storage backends ------------------------------------------------------------------
 
 
+#: SQLite header offsets for the file-format write/read version. A value of 2
+#: means the database is in WAL mode.
+_SQLITE_WRITE_VERSION = 18
+_SQLITE_READ_VERSION = 19
+
+
+def _as_rollback_journal(blob: bytes) -> bytes:
+    """A copy of `blob` with the WAL flags cleared, or `blob` if not in WAL mode.
+
+    Every real rpm database ships in WAL mode, and SQLite cannot use WAL
+    journaling on a deserialized in-memory database — the first query fails with
+    "unable to open database file". The committed pages are all in the main file,
+    so presenting it as a rollback-journal database reads exactly that state.
+    """
+    if len(blob) < 20 or blob[:15] != b"SQLite format 3":
+        return blob
+    if blob[_SQLITE_WRITE_VERSION] != 2 and blob[_SQLITE_READ_VERSION] != 2:
+        return blob
+    patched = bytearray(blob)
+    patched[_SQLITE_WRITE_VERSION] = 1
+    patched[_SQLITE_READ_VERSION] = 1
+    return bytes(patched)
+
+
 def read_sqlite_rpmdb(blob: bytes) -> Iterator[bytes]:
     """`rpmdb.sqlite`: table Packages(hnum, blob) holds header blobs."""
     conn = sqlite3.connect(":memory:")
     try:
-        conn.deserialize(blob)
+        conn.deserialize(_as_rollback_journal(blob))
         rows = conn.execute("SELECT blob FROM Packages ORDER BY hnum").fetchall()
     except sqlite3.Error as e:
         raise DetectorFailure(f"cannot read rpmdb.sqlite: {e}") from e
@@ -235,7 +259,8 @@ def read_bdb_rpmdb(blob: bytes) -> Iterator[bytes]:
 
 class RpmCataloger(Cataloger):
     id = "os/rpm"
-    version = 1
+    #: 2 — reads WAL-mode rpmdb.sqlite (every real rpm database is in WAL mode).
+    version = 2
     matchers = [
         Matcher(glob="*var/lib/rpm/rpmdb.sqlite"),
         Matcher(glob="*usr/lib/sysimage/rpm/rpmdb.sqlite"),
@@ -248,6 +273,15 @@ class RpmCataloger(Cataloger):
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
         name = entry.path.rsplit("/", 1)[-1]
         if name == "rpmdb.sqlite":
+            # Committed-but-uncheckpointed pages live in the -wal sibling, which
+            # the in-memory read cannot replay. Say so rather than quietly
+            # reporting a slightly stale package list as complete.
+            if ctx.peek(f"{entry.path}-wal"):
+                ctx.warn(
+                    "SORB-W016",
+                    f"{entry.path}: non-empty write-ahead log beside the rpm database; "
+                    "packages committed but not yet checkpointed are not included",
+                )
             headers = read_sqlite_rpmdb(blob)
         elif name == "Packages.db":
             headers = read_ndb_rpmdb(blob)

@@ -227,3 +227,56 @@ def test_registry_scan_matches_local_scan_serial(bundle, tmp_path: Path, monkeyp
     # image ID is the subject → identical document identity across paths
     assert remote.subject == local.subject
     assert remote.serial == local.serial
+
+
+# -- platform variants ------------------------------------------------------------------
+
+_ARM_INDEX = {
+    "manifests": [
+        {"digest": "sha256:a" * 1, "platform": {"os": "linux", "architecture": "amd64"}},
+        {"digest": "v6", "platform": {"os": "linux", "architecture": "arm", "variant": "v6"}},
+        {"digest": "v7", "platform": {"os": "linux", "architecture": "arm", "variant": "v7"}},
+        {"digest": "a64", "platform": {"os": "linux", "architecture": "arm64", "variant": "v8"}},
+        {
+            "digest": "att",
+            "platform": {"os": "unknown", "architecture": "unknown"},
+            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+        },
+    ]
+}
+
+
+def test_index_platforms_keeps_variants() -> None:
+    """linux/arm/v6 and linux/arm/v7 are different images.
+
+    Collapsing them to `linux/arm` made --all-platforms scan one twice and skip
+    the other, while still reporting the full platform count.
+    """
+    from sorb.container.image import index_platforms
+
+    got = index_platforms(_ARM_INDEX)
+    assert got == ["linux/amd64", "linux/arm/v6", "linux/arm/v7", "linux/arm64/v8"]
+    assert len(got) == len(set(got)), "every platform must be distinctly addressable"
+
+
+def test_select_manifest_honors_requested_variant() -> None:
+    from sorb.container.image import select_manifest_from_index
+
+    desc, resolved = select_manifest_from_index(_ARM_INDEX, "linux/arm/v7")
+    assert desc["digest"] == "v7" and resolved == "linux/arm/v7"
+    desc, resolved = select_manifest_from_index(_ARM_INDEX, "linux/arm/v6")
+    assert desc["digest"] == "v6" and resolved == "linux/arm/v6"
+    # no variant asked for: first matching architecture, reported with its variant
+    desc, resolved = select_manifest_from_index(_ARM_INDEX, "linux/arm")
+    assert desc["digest"] == "v6" and resolved == "linux/arm/v6"
+    desc, resolved = select_manifest_from_index(_ARM_INDEX, "linux/arm64")
+    assert desc["digest"] == "a64" and resolved == "linux/arm64/v8"
+
+
+def test_select_manifest_rejects_absent_variant() -> None:
+    from sorb.container.image import select_manifest_from_index
+    from sorb.errors import TargetError
+
+    with pytest.raises(TargetError) as excinfo:
+        select_manifest_from_index(_ARM_INDEX, "linux/arm/v8")
+    assert "linux/arm/v7" in str(excinfo.value)  # the available list names variants

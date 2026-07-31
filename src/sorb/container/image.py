@@ -84,13 +84,28 @@ def sha256_digest(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def parse_platform(p: str | None) -> tuple[str, str]:
-    """'linux/amd64' → ('linux', 'amd64'); default applied when None."""
+def parse_platform(p: str | None) -> tuple[str, str, str | None]:
+    """'linux/arm/v7' → ('linux', 'arm', 'v7'); default applied when None.
+
+    The variant is part of the identity: `linux/arm/v6` and `linux/arm/v7` are
+    different images. It stays None when the caller did not ask for one, which
+    means "any variant of this architecture".
+    """
     value = p or DEFAULT_PLATFORM
-    os_, sep, arch = value.partition("/")
-    if not sep or not os_ or not arch:
-        raise TargetError(f"invalid --platform {value!r} (expected os/arch)")
-    return os_, arch.split("/", 1)[0]  # variant dropped for matching
+    os_, sep, rest = value.partition("/")
+    if not sep or not os_ or not rest:
+        raise TargetError(f"invalid --platform {value!r} (expected os/arch[/variant])")
+    arch, _, variant = rest.partition("/")
+    if not arch:
+        raise TargetError(f"invalid --platform {value!r} (expected os/arch[/variant])")
+    return os_, arch, variant or None
+
+
+def platform_string(plat: dict[str, Any]) -> str:
+    """An index descriptor's platform as `os/arch[/variant]`."""
+    base = f"{plat.get('os')}/{plat.get('architecture')}"
+    variant = plat.get("variant")
+    return f"{base}/{variant}" if variant else base
 
 
 def select_manifest_from_index(
@@ -101,7 +116,7 @@ def select_manifest_from_index(
     Returns (descriptor, resolved_platform). Attestation manifests
     (vnd.dev.cosign / in-toto referrer types) are never selected.
     """
-    want_os, want_arch = parse_platform(platform)
+    want_os, want_arch, want_variant = parse_platform(platform)
     candidates: list[dict[str, Any]] = []
     for desc in index.get("manifests", []):
         ann = desc.get("annotations") or {}
@@ -110,13 +125,15 @@ def select_manifest_from_index(
         candidates.append(desc)
     for desc in candidates:
         plat = desc.get("platform") or {}
-        if plat.get("os") == want_os and plat.get("architecture") == want_arch:
-            return desc, f"{want_os}/{want_arch}"
-    available = ", ".join(
-        f"{(d.get('platform') or {}).get('os', '?')}/"
-        f"{(d.get('platform') or {}).get('architecture', '?')}"
-        for d in candidates
-    )
+        if plat.get("os") != want_os or plat.get("architecture") != want_arch:
+            continue
+        # A requested variant has to match exactly, or `--platform linux/arm/v7`
+        # would silently hand back the v6 image. No requested variant means the
+        # caller does not care, so the first matching architecture wins.
+        if want_variant is not None and (plat.get("variant") or None) != want_variant:
+            continue
+        return desc, platform_string(plat)
+    available = ", ".join(platform_string(d.get("platform") or {}) for d in candidates)
     raise TargetError(
         f"platform {want_os}/{want_arch} not in image index (available: {available or 'none'})"
     )
@@ -133,7 +150,10 @@ def index_platforms(index: dict[str, Any]) -> list[str]:
         if plat.get("os") and plat.get("architecture"):
             if plat.get("os") == "unknown":
                 continue
-            out.append(f"{plat['os']}/{plat['architecture']}")
+            # Variant included, or linux/arm/v6 and linux/arm/v7 collapse into
+            # one string and --all-platforms scans one of them twice while
+            # never scanning the other.
+            out.append(platform_string(plat))
     return out
 
 

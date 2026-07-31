@@ -197,3 +197,46 @@ def test_hf_cache_identity(tmp_path: Path) -> None:
         assert m.name == "meta-llama/Llama-3"
     finally:
         store.close()
+
+
+#: CycloneDX 1.6 fixes `certificateProperties` to exactly these fields, with
+#: additionalProperties=false. Emitting anything else is a hard schema
+#: violation on every certificate component — checked here because the official
+#: schema is not available offline.
+_CDX16_CERTIFICATE_PROPERTIES = {
+    "certificateExtension",
+    "certificateFormat",
+    "issuerName",
+    "notValidAfter",
+    "notValidBefore",
+    "signatureAlgorithmRef",
+    "subjectName",
+    "subjectPublicKeyRef",
+}
+
+
+def test_certificate_properties_conform_to_cyclonedx_schema(crypto_host) -> None:
+    store, _ = crypto_host
+    doc = json.loads(emit_cyclonedx(store, reproducible=True))
+    certs = [
+        c for c in doc["components"]
+        if (c.get("cryptoProperties") or {}).get("assetType") == "certificate"
+    ]
+    assert certs, "fixture must produce a certificate component"
+    for c in certs:
+        extra = set(c["cryptoProperties"]["certificateProperties"]) - _CDX16_CERTIFICATE_PROPERTIES
+        assert not extra, f"not valid CycloneDX 1.6 certificateProperties: {extra}"
+
+
+def test_certificate_fingerprint_survives_as_a_hash(crypto_host) -> None:
+    """Dropping certificateFingerprint must not lose the fingerprint itself."""
+    store, _ = crypto_host
+    doc = json.loads(emit_cyclonedx(store, reproducible=True))
+    certs = [
+        c for c in doc["components"]
+        if (c.get("cryptoProperties") or {}).get("assetType") == "certificate"
+    ]
+    for c in certs:
+        digests = {h["alg"]: h["content"] for h in c.get("hashes") or []}
+        assert "SHA-256" in digests, f"{c['name']} lost its fingerprint"
+        assert len(digests["SHA-256"]) == 64

@@ -260,8 +260,10 @@ def _crypto_properties(attrs: dict[str, Any]) -> dict[str, Any] | None:
             cert["notValidAfter"] = attrs["not_after"]
         if attrs.get("signature_algorithm"):
             cert["signatureAlgorithmRef"] = attrs["signature_algorithm"]
-        if attrs.get("fingerprint_sha256"):
-            cert["certificateFingerprint"] = attrs["fingerprint_sha256"]
+        # No certificateFingerprint here: CycloneDX 1.6 fixes certificateProperties
+        # to 8 fields with additionalProperties=false, so emitting it made every
+        # certificate component fail the official schema. The fingerprint rides
+        # in the component's `hashes` instead, which is where a digest belongs.
         return {"assetType": "certificate", "certificateProperties": cert}
     if attrs.get("asset_type") == "private-key":
         return {"assetType": "related-crypto-material",

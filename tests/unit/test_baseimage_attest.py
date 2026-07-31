@@ -330,3 +330,38 @@ def test_running_container_marks_entrypoint_observed(tmp_path: Path, monkeypatch
         assert any(e["kind"] == "OBSERVED_IN" for e in store.edges())
     finally:
         store.close()
+
+
+def test_parse_envelope_survives_non_utf8_referrer() -> None:
+    """A registry referrer blob that is not UTF-8 JSON is "not an envelope".
+
+    `json.loads` on such bytes raises UnicodeDecodeError, which is NOT a
+    JSONDecodeError — so it escaped the handler and killed the whole scan of any
+    image whose registry attaches binary referrers (mcr.microsoft.com does).
+    """
+    from sorb.container.attest import parse_envelope
+
+    assert parse_envelope(b"\x1f\x8b\x08\x00\x81\x00\x00\x00binary", source="d") is None
+    assert parse_envelope(b"\xff\xfe\x00\x00not json", source="d") is None
+    assert parse_envelope(b"{not json at all", source="d") is None
+    assert parse_envelope(b"", source="d") is None
+
+
+def test_attestation_discovery_is_fail_open(monkeypatch) -> None:
+    """Discovery is enrichment: one bad referrer must not abort the image scan."""
+    from sorb.container import _discover_attestations
+
+    class _Client:
+        def referrers(self, digest):  # noqa: ANN001
+            return [{"digest": "sha256:beef", "_doc": {"layers": [{"digest": "sha256:1"}]}}]
+
+        def fetch_blob(self, digest):  # noqa: ANN001
+            raise UnicodeDecodeError("utf-8", b"\x81", 0, 1, "invalid start byte")
+
+    class _Image:
+        provenance_facts = {"manifest_digest": "sha256:cafe"}
+        attestations: list = []
+
+    image = _Image()
+    _discover_attestations(_Client(), image)  # must not raise
+    assert image.attestations == []

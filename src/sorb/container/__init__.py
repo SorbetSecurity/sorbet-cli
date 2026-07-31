@@ -113,7 +113,9 @@ def _discover_attestations(client: Any, image: ResolvedImage) -> None:
                 parsed = parse_envelope(raw, source=str(desc.get("digest", "referrer")))
                 if parsed is not None and (parsed.components or parsed.kind == "provenance"):
                     docs.append(parsed)
-        except TargetError:
+        except Exception:  # noqa: BLE001 — enrichment is fail-open by design
+            # Per descriptor, matching the referrers() call above: one odd
+            # referrer must not abort the scan of the image it hangs off.
             continue
     image.attestations = [
         {

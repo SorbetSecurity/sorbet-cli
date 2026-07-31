@@ -161,3 +161,46 @@ def test_scan_populates_layers_and_attribution(
         assert "INTRODUCED_BY" in kinds
     finally:
         store.close()
+
+
+def test_daemon_api_version_is_negotiated() -> None:
+    """A hardcoded API version ages into a total failure.
+
+    Docker 29 reports MinAPIVersion 1.44 and answers 400 to every request under
+    it, so the old `v1.43` pin broke `docker:` and `container://` outright.
+    """
+    import httpx
+
+    from sorb.container.daemon import DaemonClient
+
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/version":
+            return httpx.Response(200, json={"ApiVersion": "1.53", "MinAPIVersion": "1.44"})
+        if not request.url.path.startswith("/v1.53/"):
+            return httpx.Response(400, text="client version too old")  # what Docker 29 does
+        return httpx.Response(200, json={"Id": "abc"})
+
+    client = DaemonClient("/nonexistent.sock", transport=httpx.MockTransport(handler))
+    assert client.container_inspect("abc") == {"Id": "abc"}
+    assert "/version" in seen and "/v1.53/containers/abc/json" in seen
+    # negotiated once, then remembered
+    client.container_inspect("abc")
+    assert seen.count("/version") == 1
+
+
+def test_daemon_falls_back_when_version_unavailable() -> None:
+    """An engine that will not answer /version still gets a usable prefix."""
+    import httpx
+
+    from sorb.container.daemon import DaemonClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(500)
+        return httpx.Response(200, json={"Id": "abc"})
+
+    client = DaemonClient("/nonexistent.sock", transport=httpx.MockTransport(handler))
+    assert client.container_inspect("abc") == {"Id": "abc"}

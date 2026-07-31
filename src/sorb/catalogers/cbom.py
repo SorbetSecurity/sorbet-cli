@@ -47,7 +47,9 @@ _JKS_MAGIC = b"\xfe\xed\xfe\xed"
 
 class CertificateCataloger(Cataloger):
     id = "crypto/certificate"
-    version = 1
+    #: 2 — the DER fingerprint is carried in `hashes` (CycloneDX has no
+    #: certificateFingerprint field), so cached findings must be re-derived.
+    version = 2
     matchers = [
         Matcher(glob="*.pem"), Matcher(glob="*.crt"), Matcher(glob="*.cer"),
         Matcher(glob="*.der"), Matcher(glob="*.p12"), Matcher(glob="*.pfx"),
@@ -250,7 +252,12 @@ def _cert_finding(ctx: CatalogerContext, entry: Entry, cert: Certificate) -> Fin
     return Finding(
         claim=ComponentClaim(
             ctype="cryptographic-asset", name=cn, version=fingerprint[:16],
-            ecosystem="crypto", attrs=tuple(attrs),
+            ecosystem="crypto",
+            # The DER fingerprint is the certificate's identity and belongs in
+            # `hashes`: CycloneDX has no certificateFingerprint field, and
+            # emitting one there is a hard schema violation.
+            hashes=(("sha256", fingerprint),),
+            attrs=tuple(attrs),
         ),
         evidence=(
             ctx.evidence("installed-state", Tier.INSTALLED, entry,

@@ -255,3 +255,50 @@ def test_malformed_db_degrades() -> None:
         list(read_ndb_rpmdb(b"garbage" * 100))
     with pytest.raises(DetectorFailure):
         list(read_bdb_rpmdb(b"\x00" * 4096))
+
+
+# -- WAL-mode rpmdb (what every real rpm database actually is) -----------------------
+
+
+def make_wal_sqlite_rpmdb(path, headers: list[bytes]) -> bytes:
+    """A real on-disk WAL-mode rpmdb, checkpointed — byte-for-byte what an
+    image ships. `conn.serialize()` produces a rollback-journal database, so it
+    cannot reproduce this; only a real file can."""
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE Packages(hnum INTEGER PRIMARY KEY, blob BLOB)")
+    for i, h in enumerate(headers, start=1):
+        conn.execute("INSERT INTO Packages(hnum, blob) VALUES(?, ?)", (i, h))
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.close()
+    return path.read_bytes()
+
+
+def test_read_wal_mode_sqlite_rpmdb(tmp_path) -> None:
+    """SQLite cannot use WAL journaling on a deserialized in-memory database, so
+    a real rpmdb read naively fails with "unable to open database file" — which
+    silently cost every rpm package on Fedora/Rocky images."""
+    blob = make_wal_sqlite_rpmdb(tmp_path / "rpmdb.sqlite", [CURL_HEADER, BASH_HEADER])
+    assert blob[18] == 2 and blob[19] == 2, "fixture must really be in WAL mode"
+    assert len(list(read_sqlite_rpmdb(blob))) == 2
+
+    findings = _parse_with_cataloger(
+        "usr/lib/sysimage/rpm/rpmdb.sqlite", blob, {"etc/os-release": b"ID=fedora\n"}
+    )
+    assert {f.claim.name for f in findings} == {"curl", "bash"}
+
+
+def test_uncheckpointed_wal_is_reported(tmp_path) -> None:
+    """Pages committed to the -wal but not checkpointed are not in the main file.
+    Reporting a short package list as complete would be a silent inaccuracy."""
+    blob = make_wal_sqlite_rpmdb(tmp_path / "rpmdb.sqlite", [CURL_HEADER])
+    cataloger = RpmCataloger()
+    files = {
+        "var/lib/rpm/rpmdb.sqlite": blob,
+        "var/lib/rpm/rpmdb.sqlite-wal": b"\x37\x7f\x06\x82" + b"\x00" * 60,
+    }
+    ctx = CatalogerContext(source=_MapSource(files), detector=cataloger.detector)  # type: ignore[arg-type]
+    entry = Entry(path="var/lib/rpm/rpmdb.sqlite", size=len(blob), sniff=blob[:64])
+    list(cataloger.parse(ctx, entry, blob))
+    assert any(code == "SORB-W016" for code, _ in ctx.warnings)

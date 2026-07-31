@@ -150,3 +150,8 @@ remediation = "Check the module/signature/key paths in sorb.toml, re-verify the 
 title = "grpc-plugin-not-loaded"
 explanation = "A gRPC plugin declared under [plugins.grpc].services could not be used — the endpoint was not in the trusted list, was unreachable, or advertised no path patterns. The scan continued without it."
 remediation = "Add the endpoint to [plugins.grpc] trusted = [...], confirm the service is running and reachable over TLS (or list it under insecure = [...] for plaintext), and that its MatcherGlobs reply is non-empty."
+
+[SORB-W016]
+title = "rpmdb-uncheckpointed-wal"
+explanation = "The rpm database was read from its main SQLite file, but a non-empty write-ahead log (rpmdb.sqlite-wal) sits beside it holding committed pages that have not been checkpointed yet. Those packages are not in the inventory, so the rpm component list may be slightly behind the real installed state. This normally only happens on a live host captured mid-transaction — images ship checkpointed."
+remediation = "On a live host, run `rpm -qa > /dev/null` (or any rpm command) to checkpoint the database, then re-scan. For a captured image, re-capture after the package manager has quiesced."

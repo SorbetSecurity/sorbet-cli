@@ -41,7 +41,11 @@ def parse_envelope(raw: bytes, source: str) -> AttestationDoc | None:
     """Parse a DSSE/in-toto envelope or a bare SBOM document."""
     try:
         doc = json.loads(raw)
-    except json.JSONDecodeError:
+    except ValueError:
+        # ValueError, not JSONDecodeError: `json.loads` on non-UTF-8 bytes
+        # raises UnicodeDecodeError, which is not a JSONDecodeError. Real
+        # registries attach binary referrer blobs, and "not an envelope" is the
+        # answer for those, not an exception.
         return None
     if not isinstance(doc, dict):
         return None
