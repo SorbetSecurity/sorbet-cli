@@ -28,7 +28,17 @@ from sorb.model import (
 
 #: Ecosystems where one environment holds at most one version of a package —
 #: findings merge at family level and the highest tier pins the version.
-SINGLE_VERSION_ECOS = {"pypi", "deb", "apk", "alpm", "conda", "composer", "pub"}
+#: Conan belongs here: a graph resolves each reference to exactly one version,
+#: and without it a `conanfile.txt` declaration and the `conan.lock` entry for
+#: the same package become two components, because the lock's purl carries a
+#: recipe revision (`?rrev=`) the manifest cannot know.
+#: vcpkg is here too, but only because `family_key` folds the triplet into a
+#: vcpkg family: one port has one version *per triplet*, and without the merge
+#: the per-port SPDX (`1.3.2`) and the install database (`1.3.2#1`) are two
+#: components describing the same installed library.
+SINGLE_VERSION_ECOS = {
+    "pypi", "deb", "apk", "alpm", "conda", "composer", "pub", "conan", "vcpkg",
+}
 
 _ORPHAN_MODIFIER = 0.8
 
@@ -72,6 +82,16 @@ class _UnionFind:
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.parent[max(ra, rb)] = min(ra, rb)
+
+
+def _variant_of(claim: ComponentClaim) -> str:
+    """The build variant that makes two same-named packages different things.
+
+    Only vcpkg has one today: the triplet decides architecture and, crucially,
+    static vs dynamic linkage. Everything else has a single variant.
+    """
+    qualifiers = dict(claim.qualifiers)
+    return qualifiers.get("triplet", "")
 
 
 def _eco_of(claim: ComponentClaim) -> str:
@@ -120,9 +140,19 @@ def reconcile(
         fam_members[fam_of[i]].append(i)
     for fam, members in fam_members.items():
         eco = fam.split("::", 1)[0]
-        if eco in SINGLE_VERSION_ECOS:
-            for other in members[1:]:
-                uf.union(members[0], other)
+        if eco not in SINGLE_VERSION_ECOS:
+            continue
+        # "One version per environment" is per *variant* where an ecosystem has
+        # them: a vcpkg port is installed once per triplet, and the triplet
+        # carries linkage, so an x64-windows build and an x64-windows-static
+        # build of one port are different artifacts. The family stays
+        # variant-free so a versionless manifest claim still attaches to it.
+        by_variant: dict[str, list[int]] = defaultdict(list)
+        for i in members:
+            by_variant[_variant_of(real[i][1].claim)].append(i)
+        for group in by_variant.values():
+            for other in group[1:]:
+                uf.union(group[0], other)
 
     # ---- 2. family attach for versionless (declared) claims ------------------
     versionless_by_fam: dict[str, list[int]] = defaultdict(list)

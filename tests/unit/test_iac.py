@@ -393,3 +393,37 @@ def test_terraform_evidence_points_at_the_declaring_line() -> None:
     assert span is not None
     declared_on = tf.splitlines().index('resource "aws_iam_role" "target" {') + 1
     assert span[0] == declared_on
+
+
+def test_dockerfile_package_cites_its_own_continuation_line() -> None:
+    """Each predicted package must cite the line that names it.
+
+    A `RUN apt-get install` spanning continuations declares packages across
+    many physical lines; citing the RUN's first line sends `sorb explain` to a
+    line that does not mention the package at all.
+    """
+    dockerfile = (
+        "FROM ubuntu:24.04\n"                 # 1
+        "ENV DEBIAN_FRONTEND=noninteractive\n"  # 2
+        "\n"                                   # 3
+        "RUN apt-get update && \\\n"           # 4
+        "    apt-get install -y --no-install-recommends \\\n"  # 5
+        "    ca-certificates make git \\\n"    # 6
+        "    clang automake autoconf libtool pkg-config && \\\n"  # 7
+        "    rm -rf /var/lib/apt/lists/*\n"    # 8
+    )
+    findings = catalog({"Dockerfile": dockerfile}, "Dockerfile")
+    spans = {
+        f.claim.name: f.evidence[0].location.span
+        for f in findings
+        if f.claim.ecosystem == "deb"
+    }
+    assert spans["make"] == (6, 6), spans
+    assert spans["git"] == (6, 6), spans
+    assert spans["autoconf"] == (7, 7), spans
+    assert spans["libtool"] == (7, 7), spans
+    assert spans["pkg-config"] == (7, 7), spans
+    # and every cited line really does name its package
+    lines = dockerfile.splitlines()
+    for name, span in spans.items():
+        assert name in lines[span[0] - 1], f"{name} not on line {span[0]}"

@@ -30,6 +30,7 @@ from sorb.model import (
     ComponentClaim,
     EdgeClaim,
     EdgeType,
+    EvidenceRecord,
     Finding,
     Scope,
     Tier,
@@ -179,7 +180,9 @@ def parse_pom(blob: bytes, what: str = "pom.xml") -> PomModel:
 
 class MavenPomCataloger(Cataloger):
     id = "jvm/maven-pom"
-    version = 1
+    #: 2 — a version interpolated from a parent pom also cites the file
+    #: that defines the property.
+    version = 2
     matchers = [Matcher(basename="pom.xml")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
@@ -189,6 +192,9 @@ class MavenPomCataloger(Cataloger):
 
         # ---- parent chain (repo layout; absent parents annotated) -------------
         chain = [pom]
+        # Kept alongside the models so a version interpolated from a parent can
+        # cite the file that actually defines it.
+        chain_files = [(entry.path, blob.decode("utf-8", errors="replace"))]
         node, node_dir = pom, proj_dir
         for _ in range(_MAX_PARENT_DEPTH):
             if node.parent is None:
@@ -210,14 +216,44 @@ class MavenPomCataloger(Cataloger):
                 break
             parent_pom = parse_pom(raw, parent_path)
             chain.append(parent_pom)
+            chain_files.append((parent_path, raw.decode("utf-8", errors="replace")))
             node, node_dir = parent_pom, dirname_of(parent_path)
 
         # ---- effective model: child wins over parent ---------------------------
         properties: dict[str, str] = {}
+        prop_origin: dict[str, tuple[str, str]] = {}  # property → (path, text)
         dep_mgmt: dict[tuple[str, str], tuple[str | None, str | None]] = {}
-        for p in reversed(chain):  # root-most parent first, child overrides
+        for p, origin in zip(reversed(chain), reversed(chain_files), strict=True):
             properties.update(p.properties)
+            for prop_name in p.properties:
+                prop_origin[prop_name] = origin
             dep_mgmt.update(p.dep_management)
+
+        def property_evidence(declared: str | None) -> tuple[EvidenceRecord, ...]:
+            """Cite the file defining each ``${property}`` a version came from.
+
+            Otherwise the SBOM says `4.8.0` while the only cited file says
+            `${pax.exam.version}` — a true claim that cannot be checked against
+            the bytes it names.
+            """
+            if not declared or "${" not in declared:
+                return ()
+            out: list[EvidenceRecord] = []
+            for name in dict.fromkeys(_PROP_RE.findall(declared)):
+                origin = prop_origin.get(name)
+                if origin is None or origin[0] == entry.path:
+                    continue  # defined here: the primary record already shows it
+                opath, otext = origin
+                out.append(
+                    ctx.evidence(
+                        "manifest-parse",
+                        Tier.DECLARED,
+                        Entry(path=opath, size=len(otext)),
+                        span=find_span(otext, f"<{name}>"),
+                        captured=f"<{name}>{properties.get(name, '')}</{name}>",
+                    )
+                )
+            return tuple(out)
 
         group = pom.group or (pom.parent[0] if pom.parent else None)
         version = pom.version or (pom.parent[2] if pom.parent else None)
@@ -350,6 +386,7 @@ class MavenPomCataloger(Cataloger):
                         span=span,
                         captured=f"{g}:{a}:{v or dep.version or '?'} (scope {scope_name})",
                     ),
+                    *property_evidence(dep.version),
                 ),
                 edges=(edge,),
                 annotations=tuple(dep_annotations) + tuple(annotations),

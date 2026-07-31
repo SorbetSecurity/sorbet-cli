@@ -268,9 +268,27 @@ class CMakeFileApiCataloger(Cataloger):
 # -- Long tail --------------------------------------------------------------------------
 
 
+def _wrap_version(fields: dict[str, str]) -> str | None:
+    """The version a `.wrap` actually pins, or None.
+
+    `directory` is only sometimes `name-version`: a `[wrap-git]` names a bare
+    directory, so splitting on "-" returned the package's own name as its
+    version (`libpng@libpng`) and hid the real pin in `revision`. A version has
+    to look like one, and a git wrap is pinned by its revision.
+    """
+    explicit = fields.get("wrap_version") or fields.get("version")
+    if explicit:
+        return explicit
+    suffix = fields.get("directory", "").rpartition("-")[2]
+    if suffix and suffix[0].isdigit():
+        return suffix
+    return fields.get("revision") or None
+
+
 class MesonWrapCataloger(Cataloger):
     id = "cpp/meson-wrap"
-    version = 1
+    #: 2 — a wrap-git is pinned by `revision`; `directory` is not a version.
+    version = 2
     matchers = [Matcher(glob="*subprojects/*.wrap")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
@@ -282,9 +300,7 @@ class MesonWrapCataloger(Cataloger):
             k, _, v = line.partition("=")
             fields[k.strip()] = v.strip()
         name = entry.path.rsplit("/", 1)[-1].removesuffix(".wrap")
-        version: str | None = fields.get("wrap_version") or fields.get("directory", "").split("-")[-1]
-        rev = fields.get("revision")
-        version = version or rev
+        version = _wrap_version(fields)
         url = fields.get("source_url") or fields.get("url", "")
         namespace = _github_ns(url)
         sha = fields.get("source_hash")
@@ -381,14 +397,19 @@ class GitmodulesCataloger(Cataloger):
         return None
 
 
-_LDFLAG_RE = re.compile(r"-l([\w.\-]+)")
+#: `-lfoo` only where `-l` actually starts an option. Without the left
+#: boundary the `-l` inside a long option matched too, so `--license` became a
+#: library named `icense`, `--list` became `ist` and `--line` became `ine` —
+#: names invented out of ordinary Makefile prose.
+_LDFLAG_RE = re.compile(r"(?<![-\w])-l([A-Za-z_][\w.+\-]*)")
 
 
 class MakefileCataloger(Cataloger):
     """Conservative `-l`/`pkg-config` extraction from plain Makefiles (inferred)."""
 
     id = "cpp/makefile"
-    version = 1
+    #: 2 — `-l` must start an option, so long options stop becoming libraries.
+    version = 2
     matchers = [Matcher(basename="Makefile"), Matcher(basename="makefile"), Matcher(basename="GNUmakefile")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:

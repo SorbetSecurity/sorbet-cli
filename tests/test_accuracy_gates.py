@@ -233,3 +233,78 @@ def test_cli_convert_validate_diff_merge_sign_verify(tmp_path, monkeypatch) -> N
 
 def test_gate_thresholds_documented() -> None:
     assert GATE["precision"] >= 0.98
+
+
+# -- no-hallucination gate ------------------------------------------------------------------
+
+
+def test_every_emitted_component_is_backed_by_its_cited_bytes(tmp_path) -> None:
+    """Nothing may be asserted without support.
+
+    The corpus gate checks precision and recall against an expected set; this
+    checks the stronger property that set cannot express — that each emitted
+    component is re-derivable from the file its evidence cites, using none of
+    the cataloger code that produced it.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    from evidence_audit import audit_run
+    from sorb.core.config import load_config
+    from sorb.core.pipeline import run_scan
+
+    fixture = Path(__file__).parent / "corpus" / "fixtures" / "polyglot"
+    scan_dir = materialize_fixture(fixture, tmp_path / "polyglot")
+    cfg = load_config(
+        target=scan_dir, flags={"evidence": "full"}, env={}, user_config_path=tmp_path / "nc.toml"
+    )
+    result = run_scan(str(scan_dir), cfg, store_path=tmp_path / "audit.sorb.db")
+
+    report = audit_run(result.store_path, scan_dir)
+    assert report.checked > 0, "audit examined nothing"
+    assert not report.no_evidence, f"components with no evidence: {report.no_evidence[:5]}"
+    assert report.ok, "unbacked components:\n" + "\n".join(
+        str(u) for u in report.unbacked[:10]
+    )
+
+
+def test_the_audit_actually_catches_a_hallucination(tmp_path) -> None:
+    """A gate that cannot fail is not a gate.
+
+    Plant a component whose evidence cites a real file that does not support
+    it, and require the audit to say so.
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    from evidence_audit import audit_store
+    from sorb.graph.store import GraphStore
+    from sorb.model import ComponentClaim as Claim
+    from sorb.model import Coordinates, EvidenceRecord, Finding, Tier
+
+    (tmp_path / "go.mod").write_text("module example.com/app\n\nrequire real/dep v1.0.0\n")
+    store = GraphStore.create(tmp_path / "h.sorb.db")
+    store.add_source("s1", "dir", str(tmp_path), {})
+    for name, version in (("real/dep", "v1.0.0"), ("totally-invented", "9.9.9")):
+        fid = store.add_finding(
+            Finding(
+                claim=Claim(ctype="library", name=name, version=version, ecosystem="golang"),
+                evidence=(
+                    EvidenceRecord(
+                        technique="manifest-parse", tier=Tier.DECLARED, detector="t/x@1",
+                        location=Coordinates(source_id="s1", path="go.mod"),
+                    ),
+                ),
+            )
+        )
+        cid = store.add_component(
+            purl=None, ctype="library", name=name, version=version, qualifiers={},
+            hashes={}, confidence=0.9, tier_cap=int(Tier.DECLARED),
+            attrs={"ecosystem": "golang"},
+        )
+        store.link_finding(fid, cid)
+    store.commit()
+    try:
+        report = audit_store(store, tmp_path)
+        assert not report.ok, "the audit passed a component that is not in the cited file"
+        flagged = {u.component for u in report.unbacked}
+        assert flagged == {"totally-invented"}, flagged
+        assert report.backed == 1
+    finally:
+        store.close()

@@ -24,7 +24,7 @@ from sorb.source.roles import INSTALL_DIR_RE, classify
 _SNIFF_LEN = 64
 
 
-def _sniff(path: Path) -> bytes:
+def _sniff(path: str | Path) -> bytes:
     """First bytes of a file, for magic-byte matchers.
 
     Every walked file needs these, so this goes through the raw descriptor
@@ -99,11 +99,21 @@ class DirSource:
 
     def walk(self) -> Iterator[Entry]:
         seen_dirs: set[tuple[int, int]] = set()
-        yield from self._walk_dir(self._root, seen_dirs)
+        yield from self._walk_dir(str(self._root), "", seen_dirs)
 
-    def _walk_dir(self, directory: Path, seen: set[tuple[int, int]]) -> Iterator[Entry]:
+    def _walk_dir(
+        self, directory: str, prefix: str, seen: set[tuple[int, int]]
+    ) -> Iterator[Entry]:
+        """Walk one directory, yielding entries in name order.
+
+        `os.scandir` rather than `Path.iterdir`: the dirent already answers
+        is_dir/is_symlink/stat, so the pathlib version paid three extra stat
+        calls plus a `relative_to` per file. `prefix` carries the parent's
+        source-relative path so each child's is a concatenation instead of a
+        fresh path object — at ~10k files that dominated the walk.
+        """
         try:
-            st = directory.stat()
+            st = os.stat(directory)
         except OSError:
             return
         key = (st.st_dev, st.st_ino)
@@ -111,14 +121,13 @@ class DirSource:
             return
         seen.add(key)
         try:
-            children = sorted(directory.iterdir(), key=lambda p: p.name)
+            with os.scandir(directory) as it:
+                children = sorted(it, key=lambda e: e.name)
         except OSError:
             return
         for child in children:
             name = child.name
-            rel = unicodedata.normalize(
-                "NFC", child.relative_to(self._root).as_posix()
-            )
+            rel = prefix + unicodedata.normalize("NFC", name)
             try:
                 is_symlink = child.is_symlink()
                 if child.is_dir() and not is_symlink:
@@ -129,12 +138,12 @@ class DirSource:
                         rel + "/"
                     ):
                         continue
-                    yield from self._walk_dir(child, seen)
+                    yield from self._walk_dir(child.path, rel + "/", seen)
                 elif child.is_file() or is_symlink:
                     if is_symlink:
                         # record, never follow outside the root
                         try:
-                            resolved = child.resolve()
+                            resolved = Path(child.path).resolve()
                             if not resolved.is_relative_to(self._root) or not resolved.is_file():
                                 yield Entry(path=rel, size=0, is_symlink=True)
                                 continue
@@ -144,7 +153,7 @@ class DirSource:
                         continue
                     try:
                         fst = child.stat()
-                        sniff = _sniff(child)
+                        sniff = _sniff(child.path)
                     except OSError:
                         continue
                     yield Entry(

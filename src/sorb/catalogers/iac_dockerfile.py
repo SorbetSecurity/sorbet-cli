@@ -46,19 +46,23 @@ _NPM_RE = re.compile(r"\bnpm\s+(?:install|i|add)\b" + _OPERANDS)
 
 class DockerfileCataloger(Cataloger):
     id = "iac/dockerfile"
-    version = 1
+    #: 2 — each predicted package cites the continuation line that names it,
+    #: not the first line of the RUN instruction.
+    version = 2
     matchers = [Matcher(basename="Dockerfile"), Matcher(basename="Dockerfile.*"),
                 Matcher(basename="*.dockerfile")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
-        instructions = _logical_lines(blob.decode("utf-8", errors="replace"))
+        text = blob.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        instructions = _logical_lines(text)
         proj_dir = entry.path.rsplit("/", 1)[0] if "/" in entry.path else "."
         proj_ref = ref_project(proj_dir)
         args: dict[str, str] = {}
         stages: dict[str, int] = {}
         stage_idx = 0
 
-        for lineno, instr in instructions:
+        for lineno, end_lineno, instr in instructions:
             m = _INSTR_RE.match(instr)
             if not m:
                 continue
@@ -83,7 +87,9 @@ class DockerfileCataloger(Cataloger):
                 if src_m:
                     yield self._copy_from(ctx, entry, src_m.group(1), lineno)
             elif verb == "RUN":
-                yield from self._run_packages(ctx, entry, rest, lineno, proj_ref)
+                yield from self._run_packages(
+                    ctx, entry, rest, lineno, proj_ref, lines=lines, end_lineno=end_lineno
+                )
 
     def _from(self, ctx: CatalogerContext, entry: Entry, rest: str, lineno: int,
               stages: dict[str, int], stage_idx: int, proj_ref: str) -> Iterable[Finding]:
@@ -126,7 +132,8 @@ class DockerfileCataloger(Cataloger):
         )
 
     def _run_packages(self, ctx: CatalogerContext, entry: Entry, command: str,
-                      lineno: int, proj_ref: str) -> Iterable[Finding]:
+                      lineno: int, proj_ref: str, *, lines: list[str],
+                      end_lineno: int) -> Iterable[Finding]:
         for parser, purl_type, distro in (
             (_APT_RE, "deb", "debian"), (_APK_RE, "apk", "alpine"), (_YUM_RE, "rpm", "rhel"),
             (_PIP_RE, "pypi", None), (_NPM_RE, "npm", None),
@@ -140,6 +147,7 @@ class DockerfileCataloger(Cataloger):
             ]
             for pkg, version in installs:
                 purl = make_purl(purl_type, pkg, version, namespace=distro)
+                pkg_line = _declaring_line(lines, lineno, end_lineno, pkg)
                 yield Finding(
                     claim=ComponentClaim(
                         ctype="os-package" if distro else "library", name=pkg, version=version,
@@ -147,7 +155,7 @@ class DockerfileCataloger(Cataloger):
                         attrs=(("predicted", "dockerfile-RUN"),),
                     ),
                     evidence=(ctx.evidence("manifest-parse", Tier.DECLARED, entry,
-                                           span=(lineno, lineno),
+                                           span=(pkg_line, pkg_line),
                                            captured=f"RUN … install {pkg} {version or ''}".strip()),),
                     edges=(EdgeClaim(kind=EdgeType.DEPENDS_ON, src=proj_ref,
                                      dst=ref_purl(purl) if version else ref_family(purl_type, pkg),
@@ -163,10 +171,17 @@ class DockerfileCataloger(Cataloger):
                 )
 
 
-def _logical_lines(text: str) -> list[tuple[int, str]]:
-    out: list[tuple[int, str]] = []
+def _logical_lines(text: str) -> list[tuple[int, int, str]]:
+    """Continuation-joined instructions as (first line, last line, text).
+
+    The last line matters: a `RUN apt-get install` spanning eight backslash
+    continuations declares each package on its own physical line, and citing
+    the instruction's first line sends a reader to the wrong one.
+    """
+    out: list[tuple[int, int, str]] = []
     pending = ""
     start = 0
+    lineno = 0
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.rstrip()
         stripped = line.strip()
@@ -179,14 +194,25 @@ def _logical_lines(text: str) -> list[tuple[int, str]]:
             start = lineno
             pending = stripped.rstrip("\\").strip() if stripped.endswith("\\") else stripped
         if stripped.endswith("\\"):
-            if not pending.endswith("\\"):
-                pending = pending
             continue
-        out.append((start, pending))
+        out.append((start, lineno, pending))
         pending = ""
     if pending:
-        out.append((start, pending))
+        out.append((start, lineno, pending))
     return out
+
+
+def _declaring_line(lines: list[str], start: int, end: int, token: str) -> int:
+    """The physical line in [start, end] that names `token`, else `start`.
+
+    Package names carry `-`, `.` and `+`, so the boundary has to exclude those
+    or `python3` would match inside `python3-pip`.
+    """
+    pattern = re.compile(rf"(?<![\w.+-]){re.escape(token)}(?![\w.+-])")
+    for n in range(max(start, 1), min(end, len(lines)) + 1):
+        if pattern.search(lines[n - 1]):
+            return n
+    return start
 
 
 def _subst(text: str, args: dict[str, str]) -> str:

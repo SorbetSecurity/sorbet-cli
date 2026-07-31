@@ -19,18 +19,27 @@ the truth about software it has never seen?
 | | |
 | --- | --- |
 | Ecosystems, monorepos, container images | Validated against real artifacts, with ground-truth parity where a package manager could be asked |
+| No hallucination | **1,742 components across 8 real C/C++ projects, 100% re-derivable from the bytes they cite.** Enforced every test run by a committed auditor |
+| C/C++ | Validated across vcpkg, Conan, CMake, Meson, pkg-config, Makefile and submodules — static and dynamic |
 | Linux-specific paths | Validated: `host://`, `/proc` observation, and the namespace+seccomp sandbox including a network escape test |
 | Windows artifacts | Validated at artifact level: PE VERSIONINFO and registry hives, both differentialed against third-party parsers |
 | External conformance | CycloneDX 1.6 validated against the official schema; SPDX not yet |
 | Live Windows host, podman/containerd, mobile, `disk://` (dissect), WASM, data packs, Sigstore, fleet at scale | Unproven — see Pending |
 | Linux sandbox filesystem confinement | A known limitation, not a coverage gap — see Pending |
 
-The last real-artifact round found six defects that fixture suites could not
-have caught: rpm databases unreadable on every Fedora/Rocky image, a platform
-silently skipped by `--all-platforms`, two crashes that killed a whole scan, a
-CycloneDX schema violation on every certificate, and `docker:`/`container://`
-broken outright against a current daemon. Each is now covered by a regression
-test that fails without its fix.
+Real artifacts have found eleven defects fixture suites could not: rpm
+databases unreadable on every Fedora/Rocky image, a platform silently skipped
+by `--all-platforms`, two crashes that killed a whole scan, a CycloneDX schema
+violation on every certificate, `docker:`/`container://` broken outright
+against a current daemon, vcpkg feature dependencies never emitted, a Meson
+`wrap-git` reporting a package's own name as its version, Conan manifests and
+locks splitting into duplicate components, Dockerfile packages citing the wrong
+line, and Maven versions whose cited file did not contain them. Each is covered
+by a regression test that fails without its fix.
+
+Scanning large C/C++ trees is 15–26% faster than at the start of that round
+(`gstreamer` 2.08s → 1.66s, `grpc` 1.85s → 1.42s, `opencv` 1.36s → 1.11s), with
+output verified byte-identical before and after.
 
 ## Method
 
@@ -62,13 +71,26 @@ evidence that is not plain text; and PyPI names are lowercased per PEP 503, so
 | --- | --- | --- | --- |
 | `hashicorp/vault` | Go + JS + Terraform monorepo | 3013 | 100% |
 | `jitsi/jitsi-meet` | JS + Java + ObjC + Ruby monorepo | 2406 | 100% |
-| `grpc/grpc` | 14-ecosystem monorepo | 562 | 99.6% (2 are audit-tool case artifacts) |
+| `grpc/grpc` | 14-ecosystem monorepo | 562 | 100% |
 | `npm install` tree | real `node_modules` | 139 | 100% |
 | `uv pip install` venv | real `site-packages` | 129 | 100% |
+| `gstreamer/gstreamer` | Meson + Rust + 200 subprojects | 881 | 100% |
+| `opencv/opencv` | CMake + Maven + WinRT | 89 | 100% |
+| `curl/curl`, `facebook/folly`, `redis/redis`, `nlohmann/json`, `microsoft/terminal` | C/C++ | 210 | 100% |
 
-The audit is what found the two fabrication sources fixed in this release: a
-Dockerfile `RUN` parser that read operands of the *next* shell command as
-packages, and Terraform evidence that cited line 1 for every resource.
+The auditor is committed (`tests/evidence_audit.py`) and runs as a gate in
+`tests/test_accuracy_gates.py`, so the no-hallucination property is checked on
+every test run rather than by hand. A companion test plants a component that
+the cited file does not support and requires the audit to fail — a gate that
+cannot fail is not a gate.
+
+The audit is what found the fabrication sources fixed so far: a Dockerfile
+`RUN` parser that read operands of the *next* shell command as packages,
+Terraform evidence that cited line 1 for every resource, a Dockerfile package
+citing the first line of its `RUN` rather than the continuation line that names
+it, a Meson `wrap-git` reporting the package's own name as its version, and a
+Maven version interpolated from a parent pom whose only cited file showed
+`${property}`.
 
 ## Source ecosystems
 
@@ -89,6 +111,11 @@ packages, and Terraform evidence that cited line 1 for every resource.
 | Composer | `laravel/laravel` v11 `composer.json` | Parsed; lock not available upstream |
 | CocoaPods | `jitsi-meet` | 125 components |
 | Terraform | `hashicorp/vault` enos modules | 170 components, spans now cite the declaring line |
+| C/C++ vcpkg | `microsoft/terminal` manifest + overrides | 5/5 dependencies; deps declared under `features` are emitted and scoped optional |
+| C/C++ Conan | `conanfile.txt` + `conan.lock` v2 | Manifest and lock reconcile to one component per package, lock's recipe revision retained |
+| C/C++ CMake | `opencv`, `folly`, `curl`, `grpc` | `find_package`/`FetchContent` parsed; File API codemodel read without executing CMake |
+| C/C++ Meson | `gstreamer` subprojects + wrap fixtures | `wrap-file` versions from the directory, `wrap-git` from `revision`; never the package's own name |
+| C/C++ long tail | pkg-config `.pc`, `Makefile` `-l`, `.gitmodules` | Parsed; submodule pinned commits land as locked tier |
 | Dockerfile | `grpc`, `jitsi-meet` | Predicted installs stop at the shell command boundary |
 | dpkg / apk / rpm | container images below | See containers |
 
@@ -102,6 +129,8 @@ Shallow clones of real repositories, chosen for genuine multi-language content.
 | `hashicorp/vault` | 9164 | 9 (golang, npm, terraform, deb, apk, rpm, oci, crypto, c) | 3013 | 7.9s |
 | `jitsi/jitsi-meet` | 3139 | 8 (npm, cocoapods, gem, maven, deb, oci, crypto, c) | 2406 | 2.7s |
 | `getsentry/sentry` | 20764 | 5 (npm, pypi, deb, oci, c) | 2240 | see note |
+| `gstreamer/gstreamer` | 12114 | 11 (cargo, npm, meson, crypto, deb, maven, ml, nuget, c, cmake, github) | 881 | 1.7s |
+| `opencv/opencv` | 7823 | 6 (cmake, crypto, maven, npm, oci, pypi) | 89 | 1.1s |
 
 Note: sentry's scan completes but was not re-audited after the final fixes;
 its number above predates them.
@@ -249,6 +278,7 @@ coverage.
 | **Windows, live host** | Artifact parsing is now validated against a real Windows image (PE VERSIONINFO, registry hives, layer path handling). What remains unproven needs an actual Windows machine: path handling on a live NTFS filesystem, the registry cataloger against a mounted live hive, and that `--resolve=native` refuses there as designed |
 | **Linux sandbox, filesystem confinement** | Namespaces, seccomp and network denial are validated. The root filesystem is *not* remounted read-only, so a build tool can write outside the scratch home — verified, and left as-is deliberately: making it read-only would break build tools that legitimately write to caches and `/tmp`, so it is a policy decision rather than a bug fix |
 | **Linux sandbox on x86-64** | The namespace+seccomp path is proven on native `linux/arm64`. On `linux/amd64` it could only be run under Rosetta emulation, where the kernel rejects the (architecture-specific) BPF filter. Needs a native x86-64 Linux host |
+| **C/C++ native build execution** | The static path is validated broadly. `--resolve=native` has no C/C++ driver: CMake/Meson configure steps are not run, so a dependency that only exists after configure (a generated `CMakeCache`, a resolved `FetchContent`) is out of static scope |
 | **Native drivers beyond PEP 517** | Maven, Gradle, npm, pnpm, Swift, sbt and Bazel drivers are unit-tested on their parsers only; none has been run against a real project with its toolchain installed. PEP 517 is now exercised end to end inside the Linux sandbox |
 | **PE symbols** | Real PE files are now parsed and their VERSIONINFO checked against `pefile`. PE and Mach-O still do not extract *symbols*; only ELF and WASM do |
 | **`podman:` and `containerd:` sources** | `docker:` and `container://` are validated against a live Docker 29.2 daemon. The podman and containerd paths share the client but were not exercised against those runtimes |
@@ -265,7 +295,6 @@ coverage.
 | **`sorb-accel`** | The Rust crate is a scaffold. The self-check that would adopt it is tested with a Python stand-in |
 | **Fleet at scale** | Aggregation is unit-tested and run over a handful of stores; not against hundreds of hosts |
 | **Coverage-guided fuzzing** | Only the deterministic in-process smoke fuzz runs. OSS-Fuzz integration is committed but has not been run |
-| **The evidence auditor itself** | Lives outside the repository. It should land in `tests/` so the no-hallucination property is checked every run rather than by hand |
 
 ## Reproducing
 

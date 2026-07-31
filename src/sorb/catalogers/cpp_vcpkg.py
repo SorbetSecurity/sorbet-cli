@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from typing import Any
 
 from sorb.catalogers.base import Cataloger, CatalogerContext, Matcher, find_span, register
 from sorb.catalogers.common import dirname_of, ref_family, ref_project, ref_purl
@@ -38,7 +39,8 @@ _TRIPLET_RE = re.compile(r"([\w]+)-([\w]+)(?:-(static|dynamic))?(?:-(md|mt))?")
 
 class VcpkgManifestCataloger(Cataloger):
     id = "cpp/vcpkg-manifest"
-    version = 1
+    #: 2 — dependencies declared under `features` are emitted too, gated.
+    version = 2
     matchers = [Matcher(basename="vcpkg.json")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
@@ -60,7 +62,22 @@ class VcpkgManifestCataloger(Cataloger):
         # registries as source provenance
         registries = self._registries(ctx, proj_dir)
 
-        for dep in doc.get("dependencies", []):
+        # Top-level dependencies are unconditional; everything under `features`
+        # only arrives if that feature is requested, so it is declared here and
+        # marked conditional rather than dropped — a manifest whose feature
+        # deps are missing understates the project's real dependency surface.
+        declared: list[tuple[Any, str | None]] = [
+            (dep, None) for dep in doc.get("dependencies", [])
+        ]
+        manifest_features = doc.get("features")
+        if isinstance(manifest_features, dict):
+            for feature_name, spec in sorted(manifest_features.items()):
+                if not isinstance(spec, dict):
+                    continue
+                for dep in spec.get("dependencies", []):
+                    declared.append((dep, str(feature_name)))
+
+        for dep, gating_feature in declared:
             name = dep if isinstance(dep, str) else dep.get("name")
             if not name:
                 continue
@@ -78,6 +95,8 @@ class VcpkgManifestCataloger(Cataloger):
                 qualifiers["registry"] = registries[name]
             purl = make_purl("vcpkg", name, version, qualifiers=qualifiers) if concrete else None
             attrs = tuple(("feature", f) for f in features)
+            if gating_feature:
+                attrs += (("gated-by-feature", gating_feature),)
             claim = ComponentClaim(
                 ctype="library",
                 name=name,
@@ -106,7 +125,8 @@ class VcpkgManifestCataloger(Cataloger):
                         entry,
                         span=find_span(text, f'"{name}"'),
                         captured=f"{name} {version or '(baseline)'}"
-                        + (f" [{', '.join(features)}]" if features else ""),
+                        + (f" [{', '.join(features)}]" if features else "")
+                        + (f" (feature {gating_feature})" if gating_feature else ""),
                     ),
                 ),
                 edges=(
@@ -114,9 +134,13 @@ class VcpkgManifestCataloger(Cataloger):
                         kind=EdgeType.DEPENDS_ON,
                         src=proj_ref,
                         dst=ref_purl(purl) if purl else ref_family("vcpkg", name),
-                        scope=Scope.RUNTIME,
+                        # A feature is opt-in, so its deps are conditional in
+                        # exactly the sense a Python extra is: declared, but not
+                        # part of the default build.
+                        scope=Scope.OPTIONAL if gating_feature else Scope.RUNTIME,
                         direct=True,
                         requested=str(constraint) if constraint else None,
+                        marker=f"feature:{gating_feature}" if gating_feature else None,
                     ),
                 ),
                 annotations=annotations,
@@ -204,7 +228,9 @@ class VcpkgSpdxCataloger(Cataloger):
     """Per-port `share/<port>/vcpkg.spdx.json` — declared-tier verify-ingest."""
 
     id = "cpp/vcpkg-spdx"
-    version = 1
+    #: 2 — carries the triplet its own path sits under, so the per-port SPDX
+    #: and the install database describe one component instead of two.
+    version = 2
     matchers = [Matcher(glob="*share/*/vcpkg.spdx.json")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
@@ -220,7 +246,12 @@ class VcpkgSpdxCataloger(Cataloger):
         version = str(top.get("versionInfo", "")).split("#")[0]
         if not name or not version:
             return
-        purl = make_purl("vcpkg", name, version)
+        # This file lives at vcpkg_installed/<triplet>/share/<port>/, so the
+        # triplet is known from the path. Without it the SPDX claim and the
+        # install database's claim carry different purls and the same port is
+        # reported twice — once declared, once installed.
+        qualifiers = _triplet_qualifiers(_triplet_from_path(entry.path))
+        purl = make_purl("vcpkg", name, version, qualifiers=qualifiers)
         yield Finding(
             claim=ComponentClaim(
                 ctype="library",
@@ -228,6 +259,7 @@ class VcpkgSpdxCataloger(Cataloger):
                 version=version,
                 purl=purl,
                 ecosystem="vcpkg",
+                qualifiers=tuple(sorted(qualifiers.items())),
                 licenses_declared=str(top.get("licenseConcluded"))
                 if top.get("licenseConcluded") not in (None, "NOASSERTION")
                 else None,
@@ -249,6 +281,32 @@ class VcpkgSpdxCataloger(Cataloger):
                 ),
             ),
         )
+
+
+def _triplet_from_path(path: str) -> str:
+    """The triplet directory a per-port file sits under, if any.
+
+    `…/vcpkg_installed/x64-windows-static/share/zlib/vcpkg.spdx.json` → the
+    segment after `vcpkg_installed`.
+    """
+    parts = path.split("/")
+    for marker in ("vcpkg_installed", "installed"):
+        if marker in parts:
+            idx = parts.index(marker)
+            if idx + 1 < len(parts):
+                candidate = parts[idx + 1]
+                if _TRIPLET_RE.fullmatch(candidate):
+                    return candidate
+    return ""
+
+
+def _triplet_qualifiers(arch: str) -> dict[str, str]:
+    """purl qualifiers for a triplet, matching the install database's."""
+    if not arch:
+        return {}
+    qualifiers = {"triplet": arch}
+    qualifiers.update(_parse_triplet(arch))
+    return qualifiers
 
 
 def _parse_triplet(arch: str) -> dict[str, str]:

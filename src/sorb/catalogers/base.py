@@ -224,9 +224,11 @@ def registered() -> list[Cataloger]:
 
 
 _LITERAL_RE = re.compile(r"[*?\[]")
-#: `*.json`, but not `*.deps.json`: the lookup key is the final extension, so a
-#: multi-segment suffix would never be found under it.
-_EXTENSION_RE = re.compile(r"\*(\.[^.*?\[\]/]+)")
+#: The literal extension a pattern's final segment ends with, if any. Anchored
+#: at the end so `target-*.json` and `*.deps.json` both yield `.json` — the
+#: lookup key is a path's final extension, and a pattern whose last segment
+#: ends in one can only ever match a file that has it.
+_TRAILING_EXT_RE = re.compile(r"(\.[^.*?\[\]/]+)$")
 
 #: (registry length, exact-name table, extension table, everything else). Most
 #: matchers require one exact file name or one extension, so a walked file can
@@ -246,17 +248,19 @@ def _required_name(matcher: Matcher) -> tuple[str, str] | None:
 
     ("exact", name) or ("extension", ".ext"), or None when nothing cheap can be
     required. A glob's last segment works because `*` also spans `/`, so
-    `*var/lib/dpkg/status` can only ever match a file named `status`.
+    `*var/lib/dpkg/status` can only ever match a file named `status`; by the
+    same argument `*subprojects/*.wrap` can only match a `.wrap` file, which
+    keeps such patterns out of the bucket consulted for every walked file.
     """
     for pattern in (matcher.basename, matcher.glob):
         if pattern is None:
             continue
-        ext = _EXTENSION_RE.fullmatch(pattern)
-        if ext:
-            return "extension", os.path.normcase(ext.group(1))
         segment = pattern.rsplit("/", 1)[-1]
         if segment and not _LITERAL_RE.search(segment):
             return "exact", os.path.normcase(segment)
+        ext = _TRAILING_EXT_RE.search(segment)
+        if ext:
+            return "extension", os.path.normcase(ext.group(1))
     return None
 
 

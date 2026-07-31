@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from sorb.catalogers.base import CatalogerContext, dispatch
-from sorb.model import Coordinates, Finding, Tier
+from sorb.model import Coordinates, Finding, Scope, Tier
 from sorb.source.base import Entry
 
 
@@ -204,3 +204,113 @@ def test_makefile_ldflags_inferred() -> None:
     assert "ssl" in fs and "crypto" in fs and "z" in fs
     assert "pthread" not in fs and "m" not in fs  # system noise filtered
     assert fs["ssl"].evidence[0].tier is Tier.INFERRED
+
+
+def test_vcpkg_feature_dependencies_are_emitted_and_gated() -> None:
+    """Deps under `features` are real declarations, not decoration.
+
+    microsoft/terminal declares 5 dependencies; 3 of them live under a feature,
+    and ignoring that block reported the project as having only 2.
+    """
+    manifest = json.dumps(
+        {
+            "dependencies": ["fmt", "ms-gsl"],
+            "features": {
+                "terminal": {
+                    "description": "Windows Terminal components",
+                    "dependencies": ["jsoncpp", "cli11", "cmark"],
+                }
+            },
+            "overrides": [
+                {"name": "fmt", "version": "12.1.0"},
+                {"name": "jsoncpp", "version": "1.9.6"},
+                {"name": "cli11", "version": "2.6.1"},
+                {"name": "cmark", "version": "0.31.1"},
+                {"name": "ms-gsl", "version": "4.2.2"},
+            ],
+        }
+    )
+    found = by_name(catalog({"vcpkg.json": manifest}, "vcpkg.json"))
+    assert set(found) == {"fmt", "ms-gsl", "jsoncpp", "cli11", "cmark"}
+    assert found["jsoncpp"].claim.version == "1.9.6"  # override still applies
+    assert dict(found["cli11"].claim.attrs)["gated-by-feature"] == "terminal"
+    # a feature is opt-in, so its edge is conditional, exactly like an extra
+    assert found["cmark"].edges[0].marker == "feature:terminal"
+    assert found["cmark"].edges[0].scope is Scope.OPTIONAL
+    assert found["fmt"].edges[0].marker is None
+    assert "gated-by-feature" not in dict(found["fmt"].claim.attrs)
+
+
+def test_meson_wrap_git_uses_revision_not_directory() -> None:
+    """`directory` is not a version: a wrap-git names a bare directory.
+
+    Splitting it on "-" reported `libpng` as the version *of libpng*, and hid
+    the real pin sitting in `revision`.
+    """
+    wrap = (
+        "[wrap-git]\ndirectory = libpng\n"
+        "url = https://github.com/glennrp/libpng.git\nrevision = v1.6.40\n"
+    )
+    fs = catalog({"subprojects/libpng.wrap": wrap}, "subprojects/libpng.wrap")
+    assert fs[0].claim.name == "libpng"
+    assert fs[0].claim.version == "v1.6.40"
+    assert fs[0].claim.version != "libpng"
+
+    # a directory with no version at all yields no version, never a guess
+    bare = "[wrap-git]\ndirectory = mylib\nurl = https://example.com/mylib.git\n"
+    bfs = catalog({"subprojects/mylib.wrap": bare}, "subprojects/mylib.wrap")
+    assert bfs[0].claim.version is None
+    # and the wrap-file form still reads its version out of the directory
+    wf = "[wrap-file]\ndirectory = zlib-1.3.1\nsource_url = https://zlib.net/z.tar.gz\n"
+    zfs = catalog({"subprojects/zlib.wrap": wf}, "subprojects/zlib.wrap")
+    assert zfs[0].claim.version == "1.3.1"
+
+
+def test_maven_property_from_parent_pom_is_evidenced() -> None:
+    """A version interpolated from a parent must cite where it is defined.
+
+    Otherwise the SBOM says 4.8.0 while the only file it names says
+    `${pax.exam.version}` — true, but not checkable from the cited bytes.
+    """
+    child = """<project>
+      <parent><groupId>g</groupId><artifactId>p</artifactId><version>1</version></parent>
+      <artifactId>child</artifactId>
+      <dependencies>
+        <dependency>
+          <groupId>org.ops4j.pax.exam</groupId>
+          <artifactId>pax-exam-junit4</artifactId>
+          <version>${pax.exam.version}</version>
+        </dependency>
+      </dependencies>
+    </project>"""
+    parent = """<project>
+      <groupId>g</groupId><artifactId>p</artifactId><version>1</version>
+      <properties>
+        <pax.exam.version>4.8.0</pax.exam.version>
+      </properties>
+    </project>"""
+    fs = catalog({"mod/pom.xml": child, "pom.xml": parent}, "mod/pom.xml")
+    dep = by_name(fs)["org.ops4j.pax.exam:pax-exam-junit4"]
+    assert dep.claim.version == "4.8.0"
+    cited = {e.location.path for e in dep.evidence}
+    assert "pom.xml" in cited, f"parent pom not cited: {cited}"
+    prop_ev = next(e for e in dep.evidence if e.location.path == "pom.xml")
+    assert "4.8.0" in (prop_ev.captured or "")
+    assert prop_ev.location.span is not None
+
+
+def test_makefile_long_options_are_not_libraries() -> None:
+    """`-l` has to start an option, or ordinary prose becomes dependencies.
+
+    Without a left boundary the `-l` inside `--license` matched, and a real
+    build tree produced libraries named `icense`, `ist`, `ine` and `evel`.
+    """
+    makefile = (
+        "LDLIBS = -lssl -lcrypto -lz\n"
+        "docs:\n"
+        "\t$(TOOL) --license --list --line-numbers --level=3\n"
+        "\t$(CC) -Wl,--gc-sections $(LDLIBS) -lstdc++\n"
+    )
+    names = {f.claim.name for f in catalog({"Makefile": makefile}, "Makefile")}
+    assert {"ssl", "crypto", "z", "stdc++"} <= names
+    assert not ({"icense", "ist", "ine", "evel", "ine-numbers"} & names), names
