@@ -205,3 +205,26 @@ def test_deno_lock_splits_jsr_and_npm_and_strips_peer_suffixes() -> None:
     assert {f.claim.purl for f in found if f.claim.name == "@std/assert"} == {
         "pkg:jsr/%40std/assert@1.0.6"
     }
+
+
+def test_aliased_npm_install_is_not_dropped() -> None:
+    """`npm i wrap-ansi-cjs@npm:wrap-ansi@7.0.0` installs under another name.
+
+    Requiring the directory to match the declared name discarded every aliased
+    package — node:20-alpine ships exactly this, and wrap-ansi@7.0.0 vanished.
+    """
+    real = json.dumps({"name": "wrap-ansi", "version": "7.0.0", "license": "MIT"})
+    path = "usr/lib/node_modules/npm/node_modules/wrap-ansi-cjs/package.json"
+    found = catalog({path: real}, path)
+    assert len(found) == 1
+    claim = found[0].claim
+    assert (claim.name, claim.version) == ("wrap-ansi", "7.0.0")
+    assert claim.purl == "pkg:npm/wrap-ansi@7.0.0"
+    # the directory it was installed under is recorded, not silently dropped
+    assert dict(claim.attrs)["installed-as"] == "wrap-ansi-cjs"
+
+    # a normally-installed package carries no alias marker
+    plain = json.dumps({"name": "left-pad", "version": "1.3.0"})
+    ppath = "node_modules/left-pad/package.json"
+    pfound = catalog({ppath: plain}, ppath)
+    assert "installed-as" not in dict(pfound[0].claim.attrs)

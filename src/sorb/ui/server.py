@@ -453,18 +453,46 @@ def _component_detail_json(store: GraphStore, cid: int) -> dict[str, Any]:
 
 
 def _layers_json(store: GraphStore) -> dict[str, Any]:
-    layers = store.layers()
+    """Per-layer stack: churn, components introduced, and base-image origin.
+
+    One pass over file states and components — the previous version re-read
+    every file state once per layer, which on a real image meant thousands of
+    rows scanned N times to produce two counts.
+    """
+    from collections import Counter
+
+    added: Counter[str] = Counter()
+    removed: Counter[str] = Counter()
+    modified: Counter[str] = Counter()
+    for f in store.file_states(None):
+        bucket = {"added": added, "removed": removed, "modified": modified}.get(f["state"])
+        if bucket is not None:
+            bucket[str(f["layer_digest"])] += 1
+
+    comps: Counter[int] = Counter()
+    from_base: Counter[int] = Counter()
+    for c in store.components():
+        if c.attrs.get("excluded"):
+            continue
+        ordinal = c.attrs.get("layer_ordinal")
+        if ordinal is None:
+            continue
+        comps[int(ordinal)] += 1
+        if c.attrs.get("from_base_image"):
+            from_base[int(ordinal)] += 1
+
     out = []
-    for layer in layers:
-        files = store.file_states(None)
-        added = [f for f in files if f["layer_digest"] == layer["digest"] and f["state"] == "added"]
-        removed = [f for f in files if f["layer_digest"] == layer["digest"] and f["state"] == "removed"]
+    for layer in store.layers():
+        digest, ordinal = str(layer["digest"]), int(layer["ordinal"])
         out.append({
-            "digest": layer["digest"],
-            "ordinal": layer["ordinal"],
+            "digest": digest,
+            "ordinal": ordinal,
             "created_by": layer["created_by"],
-            "added": len(added),
-            "removed": len(removed),
+            "added": added[digest],
+            "modified": modified[digest],
+            "removed": removed[digest],
+            "components": comps[ordinal],
+            "from_base_image": from_base[ordinal] > 0,
         })
     return {"layers": out}
 

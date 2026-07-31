@@ -247,3 +247,70 @@ def test_file_states_persisted(upgraded_image_scan) -> None:
     states = store.file_states("var/lib/dpkg/status")
     assert [s["state"] for s in states] == ["added", "modified"]
     assert [s["ordinal"] for s in states] == [0, 1]
+
+
+def _layered_store(tmp_path):  # noqa: ANN001, ANN202
+    """A two-layer image store with churn and per-layer components."""
+    from sorb.graph.store import GraphStore
+
+    store = GraphStore.create(tmp_path / "layers.sorb.db")
+    store.add_source("s1", "oci", "demo", {})
+    store.set_meta("target", "image:demo:1")
+    for ordinal, digest, made in ((0, "sha256:aa", "ADD rootfs /"), (1, "sha256:bb", "RUN apk add curl")):
+        store.add_layer(digest, "s1", ordinal, made)
+    for path, digest, ordinal, state in (
+        ("bin/sh", "sha256:aa", 0, "added"),
+        ("etc/os-release", "sha256:aa", 0, "added"),
+        ("usr/bin/curl", "sha256:bb", 1, "added"),
+        ("etc/os-release", "sha256:bb", 1, "modified"),
+        ("bin/sh", "sha256:bb", 1, "removed"),
+    ):
+        store.add_file_state("s1", path, digest, ordinal, state)
+    store.add_component(
+        purl="pkg:apk/alpine/musl@1.2.5", ctype="os-package", name="musl", version="1.2.5",
+        qualifiers={}, hashes={}, confidence=0.95, tier_cap=4,
+        attrs={"ecosystem": "apk", "layer_ordinal": 0, "from_base_image": "alpine:3.20"},
+    )
+    store.add_component(
+        purl="pkg:apk/alpine/curl@8.11.0", ctype="os-package", name="curl", version="8.11.0",
+        qualifiers={}, hashes={}, confidence=0.95, tier_cap=4,
+        attrs={"ecosystem": "apk", "layer_ordinal": 1},
+    )
+    store.commit()
+    return store
+
+
+def test_layer_stack_json_counts_churn_and_components(tmp_path) -> None:
+    """The UI layer stack reports what each layer changed and introduced."""
+    from sorb.ui.server import _layers_json
+
+    store = _layered_store(tmp_path)
+    try:
+        rows = {row["ordinal"]: row for row in _layers_json(store)["layers"]}
+        assert rows[0]["added"] == 2 and rows[0]["components"] == 1
+        assert rows[0]["from_base_image"] is True
+        assert rows[1]["added"] == 1 and rows[1]["modified"] == 1 and rows[1]["removed"] == 1
+        assert rows[1]["components"] == 1 and rows[1]["from_base_image"] is False
+        assert rows[1]["created_by"] == "RUN apk add curl"
+    finally:
+        store.close()
+
+
+def test_cli_layers_report_matches_the_stack(tmp_path, capsys) -> None:
+    """`sorb layers` renders the same facts the UI draws, from the same store."""
+    from sorb.cli.main import _render_layers
+
+    store = _layered_store(tmp_path)
+    try:
+        _render_layers(store, "image:demo:1", None)
+        out = capsys.readouterr().out
+        assert "2 layers" in out
+        assert "RUN apk add curl" in out
+        assert "(base)" in out  # layer 0 came from the base image
+
+        _render_layers(store, "image:demo:1", 1)
+        detail = capsys.readouterr().out
+        assert "curl@8.11.0" in detail
+        assert "musl" not in detail  # layer 1 did not introduce musl
+    finally:
+        store.close()

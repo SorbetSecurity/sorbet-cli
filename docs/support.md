@@ -72,7 +72,7 @@ The tier a format yields matters as much as whether it is read at all:
 | Area | Formats read |
 | --- | --- |
 | OS packages | dpkg, apk, pacman, rpm (sqlite / ndb / Berkeley DB), portage (Gentoo VDB), snap |
-| Containers | registry-direct, OCI layout, docker-save archives, `docker:`, `containerd:`, `container://` |
+| Containers | registry-direct, OCI layout, docker-save archives, `docker:`, `containerd:`, `container://`; `sorb layers` reports per-layer churn, the instruction that built each layer, and what it introduced |
 | Binaries | ELF, PE, Mach-O, WASM link graphs; Go buildinfo, cargo-auditable, .NET CLR |
 | Mobile | `*.apk`, `*.aab`, `*.ipa` |
 | Windows | registry hives (`SOFTWARE`, `SYSTEM`) |

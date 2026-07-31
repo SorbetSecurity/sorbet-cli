@@ -717,7 +717,8 @@ _NM_PKG_RE = re.compile(
 
 class NodeModulesCataloger(Cataloger):
     id = "js/node-modules"
-    version = 1
+    #: 2 — aliased installs (dir name != declared name) are real packages.
+    version = 2
     matchers = [Matcher(glob="*node_modules/*package.json")]
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
@@ -734,11 +735,14 @@ class NodeModulesCataloger(Cataloger):
         version = doc.get("version")
         if not name or not version:
             return
-        # dir name must correspond to the declared name (fake/junk guard)
+        # An npm *alias* install deliberately puts a package in a directory of
+        # another name (`npm i wrap-ansi-cjs@npm:wrap-ansi@7.0.0`), so the two
+        # disagreeing is normal, not junk. What is actually installed is what
+        # the manifest declares, and the directory is recorded alongside it —
+        # requiring them to match dropped every aliased package on the floor.
         dir_name = m.group(2)
         declared = str(name)
-        if not (declared == dir_name or declared.endswith("/" + dir_name)):
-            return
+        aliased = not (declared == dir_name or declared.endswith("/" + dir_name))
         purl = _npm_purl(str(name), str(version))
         license_val = doc.get("license")
         yield Finding(
@@ -749,6 +753,7 @@ class NodeModulesCataloger(Cataloger):
                 purl=purl,
                 ecosystem="npm",
                 licenses_declared=license_val if isinstance(license_val, str) else None,
+                attrs=(("installed-as", dir_name),) if aliased else (),
             ),
             evidence=(
                 ctx.evidence("installed-state", Tier.INSTALLED, entry, span=(1, 1)),
