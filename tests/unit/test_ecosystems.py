@@ -233,3 +233,40 @@ def test_snap_yaml_is_installed_state() -> None:
     found = catalog({"snap/meta/snap.yaml": snap}, "snap/meta/snap.yaml")
     assert [(f.claim.name, f.claim.version) for f in found] == [("hello-world", "6.4")]
     assert found[0].evidence[0].tier is Tier.INSTALLED
+
+
+def test_homebrew_formula_and_cask_identity_comes_from_the_path() -> None:
+    """brew's receipt states no version; the path it is filed under does.
+
+    Homebrew was absent from the host store list entirely, which made a scan of
+    a Mac report almost nothing — most software on a developer Mac is a keg.
+    """
+    receipt = json.dumps({"poured_from_bottle": True, "source": {"tap": "homebrew/core"}})
+    keg = "opt/homebrew/Cellar/jq/1.7.1/INSTALL_RECEIPT.json"
+    found = catalog({keg: receipt}, keg)
+    assert len(found) == 1
+    claim = found[0].claim
+    assert (claim.name, claim.version) == ("jq", "1.7.1")
+    assert claim.purl == "pkg:brew/jq@1.7.1"
+    assert dict(claim.attrs)["poured-from-bottle"] == "true"
+    assert dict(claim.attrs)["tap"] == "homebrew/core"
+    assert found[0].evidence[0].tier is Tier.INSTALLED
+
+    # a cask files its receipt under .metadata/<version>/<stamp>/Casks/<name>.json
+    cask = (
+        "opt/homebrew/Caskroom/gcloud-cli/.metadata/503.0.0/"
+        "20241216124731.495/Casks/gcloud-cli.json"
+    )
+    cfound = catalog({cask: json.dumps({"token": "gcloud-cli"})}, cask)
+    assert [(f.claim.name, f.claim.version) for f in cfound] == [("gcloud-cli", "503.0.0")]
+
+
+def test_homebrew_is_a_discovered_host_store() -> None:
+    """Both Apple Silicon and Intel prefixes, formulae and casks."""
+    from sorb.source.host import _FIXED_STORES
+
+    for expected in (
+        "opt/homebrew/Cellar", "usr/local/Cellar",
+        "opt/homebrew/Caskroom", "usr/local/Caskroom",
+    ):
+        assert expected in _FIXED_STORES, expected

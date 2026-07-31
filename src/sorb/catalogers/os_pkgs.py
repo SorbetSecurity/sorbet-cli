@@ -6,6 +6,7 @@ rpm (Berkeley DB / sqlite / ndb header decode) lives separately in
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 
@@ -323,3 +324,69 @@ def _sibling(ctx: CatalogerContext, directory: str, name: str) -> str | None:
 
 
 register(PortageCataloger())
+
+
+# -- Homebrew ----------------------------------------------------------------------------
+
+#: brew writes an `INSTALL_RECEIPT.json` per install, and the path — not the
+#: receipt — states the identity. Formulae keep it inside the versioned keg
+#: (`Cellar/<name>/<version>/`); casks keep one per cask in `.metadata/`, with
+#: the version in a sibling directory.
+_CELLAR_RE = re.compile(r"(?:^|/)Cellar/(?P<name>[^/]+)/(?P<version>[^/]+)/INSTALL_RECEIPT\.json$")
+#: `Caskroom/<name>/.metadata/<version>/<stamp>/Casks/<name>.json` — the cask's
+#: own receipt states no version, but the path it is filed under does.
+_CASKROOM_RE = re.compile(
+    r"(?:^|/)Caskroom/(?P<name>[^/]+)/\.metadata/(?P<version>[^/]+)/[^/]+/Casks/[^/]+\.json$"
+)
+
+
+class HomebrewCataloger(Cataloger):
+    """Homebrew formulae and casks (installed tier).
+
+    A cask is an application rather than a library, but it is installed
+    software on the machine and `brew list` reports both.
+    """
+
+    id = "os/homebrew"
+    version = 1
+    matchers = [
+        Matcher(glob="*Cellar/*/*/INSTALL_RECEIPT.json"),
+        Matcher(glob="*Caskroom/*/.metadata/*/*/Casks/*.json"),
+    ]
+
+    def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
+        m = _CELLAR_RE.search(entry.path)
+        if m:
+            name, version = m.group("name"), m.group("version")
+        else:
+            cask = _CASKROOM_RE.search(entry.path)
+            if not cask:
+                return
+            name, version = cask.group("name"), cask.group("version")
+        attrs: list[tuple[str, str]] = []
+        try:
+            receipt = json.loads(blob)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            receipt = {}
+        if isinstance(receipt, dict):
+            # `poured_from_bottle` distinguishes a prebuilt binary from a local
+            # build, which changes what the bytes on disk actually are.
+            if isinstance(receipt.get("poured_from_bottle"), bool):
+                attrs.append(("poured-from-bottle", str(receipt["poured_from_bottle"]).lower()))
+            tap = ((receipt.get("source") or {}).get("tap")) if receipt.get("source") else None
+            if isinstance(tap, str) and tap:
+                attrs.append(("tap", tap))
+        purl = make_purl("brew", name, version)
+        yield Finding(
+            claim=ComponentClaim(
+                ctype="application", name=name, version=version, purl=purl,
+                ecosystem="brew", attrs=tuple(attrs),
+            ),
+            evidence=(
+                ctx.evidence("installed-state", Tier.INSTALLED, entry,
+                             captured=f"{name} {version}"),
+            ),
+        )
+
+
+register(HomebrewCataloger())

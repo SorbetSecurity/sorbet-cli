@@ -479,6 +479,18 @@ def _run_dir_scan(
 
         if isinstance(source, LiveHostSource):
             augment_host(store, source, config, bus)
+            # A host walk skips whatever it cannot open. Saying so is the
+            # difference between "this machine has 13 packages" and "13 is all
+            # I was allowed to see".
+            if source.unreadable_count:
+                message = (
+                    f"host inventory is partial: {source.unreadable_count} location(s) "
+                    "could not be read (run with more privilege, or capture the disk "
+                    "and scan it with disk://)"
+                )
+                warnings.append(("SORB-W017", message))
+                bus.emit(WarningRaised(code="SORB-W017", message=message))
+                store.add_annotation("run", 0, "host-inventory-partial", message)
 
     # ---- follow images: chase IaC-referenced images into scans -----------------
     if config.follow_images:

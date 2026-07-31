@@ -49,3 +49,29 @@ def test_role_classification() -> None:
     assert classify("src/app/main.py") is None
     # installed state is never penalized as fixture (roles.py rule)
     assert classify("tests/node_modules/lodash/package.json") is None
+
+
+def test_host_walk_records_what_it_could_not_read(tmp_path, monkeypatch) -> None:
+    """A partial host inventory must say so.
+
+    Silently skipping unreadable locations reports a near-empty machine as
+    though it were a complete answer.
+    """
+    from sorb.source.host import LiveHostSource
+
+    root = tmp_path / "host"
+    (root / "usr/lib/node_modules/pkg").mkdir(parents=True)
+    (root / "usr/lib/node_modules/pkg/package.json").write_text('{"name":"pkg","version":"1.0.0"}')
+    source = LiveHostSource(root=root)
+    assert source.unreadable_count == 0
+
+    real_iterdir = type(root).iterdir
+
+    def deny(self):  # noqa: ANN001, ANN202
+        if self.name == "node_modules":
+            raise PermissionError(13, "Operation not permitted")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(type(root), "iterdir", deny)
+    list(source.walk())
+    assert source.unreadable_count > 0

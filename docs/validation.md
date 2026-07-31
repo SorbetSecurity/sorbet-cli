@@ -21,6 +21,7 @@ the truth about software it has never seen?
 | Ecosystems, monorepos, container images | Validated against real artifacts, with ground-truth parity where a package manager could be asked |
 | No hallucination | **1,742 components across 8 real C/C++ projects, 100% re-derivable from the bytes they cite.** Enforced every test run by a committed auditor |
 | C/C++ | Validated across vcpkg, Conan, CMake, Meson, pkg-config, Makefile and submodules — static and dynamic |
+| Host inventory | macOS: Homebrew formulae and casks at 23/23 against `brew list --versions`. A partial walk now raises `SORB-W017` instead of reporting a near-empty machine as a complete answer |
 | Linux-specific paths | Validated: `host://`, `/proc` observation, and the namespace+seccomp sandbox including a network escape test |
 | Windows artifacts | Validated at artifact level: PE VERSIONINFO and registry hives, both differentialed against third-party parsers |
 | External conformance | CycloneDX 1.6 validated against the official schema; SPDX not yet |
@@ -286,7 +287,7 @@ coverage.
 | **Real WASM modules** | The ABI is proven with generated guests. No module built from Rust or TinyGo has been loaded |
 | **Mobile artifacts** | No real APK, AAB or IPA. DEX class-tree extraction is a known depth gap |
 | **`disk://` with the `dissect` backend** | Only the in-process FAT path is covered. ext4, XFS, Btrfs, NTFS, qcow2, VMDK and LVM are untested against real images |
-| **`host://` on Windows** | Exercised on macOS (4394 components across 14 ecosystems) and Linux (87/87 dpkg parity, `/proc` observation). A Windows host remains untested |
+| **`host://` on Windows** | Exercised on macOS (Homebrew 23/23 parity with `brew list --versions`) and Linux (87/87 dpkg parity, `/proc` observation). A Windows host remains untested |
 | **Signature data packs** | `sorb db update` is tested with generated packs; no real signature pack has been built and installed, so the fingerprint engines have not run against a real corpus |
 | **Remote cache** | The reference server is driven in-process. No multi-machine CI fleet has shared a cache |
 | **gRPC plugin against a real server** | Only a fake channel. Needs a service implementing `plugin_v1.proto` |

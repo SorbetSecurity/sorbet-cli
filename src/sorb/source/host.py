@@ -47,6 +47,15 @@ _FIXED_STORES: tuple[str, ...] = (
     "var/lib/gems",
     "usr/lib/go/pkg/mod",
     "usr/local/go/pkg/mod",
+    # Homebrew: `/opt/homebrew` on Apple Silicon, `/usr/local` on Intel. Most
+    # of the software on a developer Mac lives here, and without it a host
+    # inventory of a Mac is close to empty.
+    "opt/homebrew/Cellar",
+    "usr/local/Cellar",
+    # casks are applications rather than libraries, but `brew list` reports
+    # them and they are installed software on the machine
+    "opt/homebrew/Caskroom",
+    "usr/local/Caskroom",
 )
 _GLOB_STORES: tuple[str, ...] = (
     "usr/lib/python*/site-packages",
@@ -134,6 +143,9 @@ class LiveHostSource:
         self._id = source_id
         self._digest_cache: dict[str, str] = {}
         self._store_roots = discover_store_roots(self._root)
+        #: locations the walk could not read, and how many there were overall
+        self._unreadable: list[str] = []
+        self.unreadable_count = 0
 
     @property
     def host_root(self) -> Path:
@@ -158,6 +170,7 @@ class LiveHostSource:
                         sniff = f.read(_SNIFF_LEN)
                     yield Entry(path=rel, size=p.stat().st_size, sniff=sniff)
             except OSError:
+                self._note_unreadable(rel)
                 continue
         for store in self._store_roots:
             yield from self._walk_dir(store, seen_dirs, depth=0)
@@ -170,6 +183,7 @@ class LiveHostSource:
         try:
             st = directory.stat()
         except OSError:
+            self._note_unreadable(self._rel(directory))
             return
         key = (st.st_dev, st.st_ino)
         if key in seen:  # loop guard across symlinked stores
@@ -178,6 +192,7 @@ class LiveHostSource:
         try:
             children = sorted(directory.iterdir(), key=lambda p: p.name)
         except OSError:
+            self._note_unreadable(self._rel(directory))
             return
         for child in children:
             try:
@@ -191,10 +206,23 @@ class LiveHostSource:
                         with open(child, "rb") as f:
                             sniff = f.read(_SNIFF_LEN)
                     except OSError:
+                        self._note_unreadable(rel)
                         continue
                     yield Entry(path=rel, size=fst.st_size, role=classify(rel), sniff=sniff)
             except OSError:
                 continue
+
+    def _note_unreadable(self, where: str) -> None:
+        """Record a location the walk could not read.
+
+        A host inventory that silently skips what it cannot open reports a
+        near-empty machine as though it were a complete answer — the usual
+        cause is running unprivileged or inside a sandbox, and the user needs
+        to be told rather than left to trust the number.
+        """
+        if len(self._unreadable) < 200:  # a bounded sample is enough to explain
+            self._unreadable.append(where)
+        self.unreadable_count += 1
 
     def _rel(self, path: Path) -> str:
         return unicodedata.normalize("NFC", path.relative_to(self._root).as_posix())

@@ -155,3 +155,8 @@ remediation = "Add the endpoint to [plugins.grpc] trusted = [...], confirm the s
 title = "rpmdb-uncheckpointed-wal"
 explanation = "The rpm database was read from its main SQLite file, but a non-empty write-ahead log (rpmdb.sqlite-wal) sits beside it holding committed pages that have not been checkpointed yet. Those packages are not in the inventory, so the rpm component list may be slightly behind the real installed state. This normally only happens on a live host captured mid-transaction — images ship checkpointed."
 remediation = "On a live host, run `rpm -qa > /dev/null` (or any rpm command) to checkpoint the database, then re-scan. For a captured image, re-capture after the package manager has quiesced."
+
+[SORB-W017]
+title = "host-inventory-partial"
+explanation = "Some locations on the host could not be read, so the inventory is incomplete — the component list describes only what was reachable. The usual causes are running unprivileged (package databases and other users' home directories are not world-readable) or running inside a sandbox that restricts filesystem access."
+remediation = "Re-run with the privileges needed to read the whole filesystem (on macOS this also means granting Full Disk Access to your terminal). To inventory a machine you cannot run on, capture it and scan the image with `disk://` instead."

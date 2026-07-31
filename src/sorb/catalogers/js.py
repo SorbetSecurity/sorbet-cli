@@ -70,10 +70,63 @@ def _in_node_modules(path: str) -> bool:
     return "node_modules/" in path or path.startswith("node_modules")
 
 
+#: Source kinds where the filesystem *is* installed state. In an image, a host
+#: or a disk, a manifest sitting outside `node_modules` describes software that
+#: is present — `/opt/yarn-v1.22.22/package.json` is the installed yarn. In a
+#: source tree the same file is a project being developed, and emitting its own
+#: identity would list every workspace member twice.
+_INSTALLED_STATE_SOURCES = frozenset({"oci", "archive", "host", "disk"})
+
+
 class PackageJsonCataloger(Cataloger):
     id = "js/package-json"
-    version = 1
+    #: 2 — a manifest in an installed-state source also names an installed package.
+    version = 2
     matchers = [Matcher(basename="package.json")]
+
+    def _self_identity(
+        self, ctx: CatalogerContext, entry: Entry, doc: dict[str, Any], text: str
+    ) -> Iterable[Finding]:
+        """The package this manifest *is*, when the manifest is installed state.
+
+        A tool unpacked into the image (yarn under `/opt`) is inventory in
+        exactly the way a `node_modules` entry is; it simply does not live in
+        one, so `js/node-modules` never sees it.
+        """
+        try:
+            kind = ctx.source.root().kind
+        except Exception:  # noqa: BLE001 — a source that cannot say is treated as a tree
+            return
+        if kind not in _INSTALLED_STATE_SOURCES:
+            return
+        name, version = doc.get("name"), doc.get("version")
+        if not isinstance(name, str) or not isinstance(version, str) or not name or not version:
+            return
+        purl = _npm_purl(name, version)
+        license_val = doc.get("license")
+        yield Finding(
+            claim=ComponentClaim(
+                ctype="library",
+                name=name,
+                version=version,
+                purl=purl,
+                ecosystem="npm",
+                licenses_declared=license_val if isinstance(license_val, str) else None,
+                attrs=(("installed-outside-node-modules", "true"),),
+            ),
+            evidence=(
+                ctx.evidence(
+                    "installed-state",
+                    Tier.INSTALLED,
+                    entry,
+                    span=find_span(text, f'"{name}"'),
+                    captured=f"{name} {version}",
+                ),
+            ),
+            edges=(
+                EdgeClaim(kind=EdgeType.INSTANCE_OF, src=ref_file(entry.path), dst=ref_purl(purl)),
+            ),
+        )
 
     def parse(self, ctx: CatalogerContext, entry: Entry, blob: bytes) -> Iterable[Finding]:
         if _in_node_modules(entry.path):
@@ -89,6 +142,8 @@ class PackageJsonCataloger(Cataloger):
         proj_name = str(doc.get("name") or proj_dir)
         project = ctx.declare_project(proj_dir, proj_name, "npm")
         proj_ref = ref_project(project.path)
+
+        yield from self._self_identity(ctx, entry, doc, text)
 
         # packageManager pin → build-tool component
         pm = doc.get("packageManager")

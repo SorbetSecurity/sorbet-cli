@@ -71,7 +71,7 @@ The tier a format yields matters as much as whether it is read at all:
 
 | Area | Formats read |
 | --- | --- |
-| OS packages | dpkg, apk, pacman, rpm (sqlite / ndb / Berkeley DB), portage (Gentoo VDB), snap |
+| OS packages | dpkg, apk, pacman, rpm (sqlite / ndb / Berkeley DB), portage (Gentoo VDB), snap, Homebrew formulae and casks |
 | Containers | registry-direct, OCI layout, docker-save archives, `docker:`, `containerd:`, `container://`; `sorb layers` reports per-layer churn, the instruction that built each layer, and what it introduced |
 | Binaries | ELF, PE, Mach-O, WASM link graphs; Go buildinfo, cargo-auditable, .NET CLR |
 | Mobile | `*.apk`, `*.aab`, `*.ipa` |
@@ -95,7 +95,7 @@ not yet checkable*, which is a different thing from a gap in intent:
 | --- | --- |
 | `WORKSPACE` (Bazel) | The legacy Starlark form runs arbitrary code to declare repositories. `MODULE.bazel` (bzlmod) is the declarative successor and is read instead |
 | `bun.lockb` | Bun's legacy *binary* lockfile. Bun 1.2+ writes the text `bun.lock` by default and can regenerate it from the binary form, so the text reader covers current projects |
-| `Brewfile.lock.json` | Homebrew removed lockfile generation; `brew bundle` in 6.x has no `lock` subcommand, so current Homebrew never writes one. Supporting it would mean shipping a reader for a format no live tool produces and that cannot be validated against a freshly generated artifact |
+| `Brewfile.lock.json` | Homebrew removed lockfile generation; `brew bundle` in 6.x has no `lock` subcommand, so current Homebrew never writes one. Installed Homebrew software is read from the Cellar and Caskroom instead, which is what `brew list` reports |
 
 A dynamic manifest (`build.sbt`, `Package.swift`, `WORKSPACE`) is what
 `--resolve=native` exists for: the honest static answer is often "this file
