@@ -50,6 +50,45 @@ sorb query 'components where confidence < 0.9'
 sorb ui .                                    # scan, then explore in the browser
 ```
 
+## Concepts
+
+Five terms appear throughout `sorb`'s output. They are worth two minutes.
+
+**Component** — one piece of software in the result: a library, an OS package,
+an application, a certificate. Components are what an SBOM lists.
+
+**Evidence** — the bytes that prove a component is there. Every component
+carries at least one evidence record naming a file, a line, the detector that
+read it, and what it read. Nothing is asserted without one, which is why
+`sorb explain` can always answer "how do you know?".
+
+**Evidence tier** — how close that proof is to the running system. Four rungs,
+weakest to strongest:
+
+| Tier | Means | Read from |
+| --- | --- | --- |
+| `declared` | somebody asked for it | `package.json`, `pyproject.toml` |
+| `locked` | a resolver pinned it | `package-lock.json`, `poetry.lock` |
+| `installed` | it is on disk | `node_modules/`, dpkg/apk/rpm databases |
+| `observed` | it was loaded at runtime | `sorb trace`, `/proc` |
+
+A higher tier wins when sources disagree: if the lockfile says 2.31 and the
+installed package is 2.32, the answer is 2.32 and the disagreement is reported
+as drift rather than silently dropped.
+
+**Confidence** — a 0–1 score derived from the evidence, never a guess. Multiple
+independent sources agreeing raises it; a file in a test fixture lowers it; the
+tier caps it. `sorb explain` shows the arithmetic.
+
+**Reconciliation** — the step that turns many raw findings into one component
+list. A package named by a manifest, a lockfile and an install record is one
+component with three pieces of evidence, not three components.
+
+**purl** — the [package URL](https://github.com/package-url/purl-spec) standard
+for naming a package unambiguously, e.g. `pkg:npm/left-pad@1.3.0`. When a
+version cannot be resolved, `sorb` emits a *versionless* purl rather than
+inventing one.
+
 ## `sorb scan` - targets
 
 ```
@@ -158,6 +197,31 @@ sorb explain pkg:pypi/requests@2.32.3    # provenance chain + every piece of evi
 sorb explain requests                    # name[@version], digest, or path also work
 sorb explain-warning SORB-W031           # what a warning code means + remediation
 ```
+
+### Exploring a container image
+
+`sorb layers` breaks an image down the way it was built — one row per layer,
+with the instruction that created it, how many files it changed, and how many
+components it introduced:
+
+```bash
+sorb layers image:node:20-alpine         # the layer stack at a glance
+sorb layers image:node:20-alpine --layer 2   # what that layer added, with evidence
+```
+
+```
+image:node:20-alpine
+  4 layers · 361 components attributed to a layer
+
+   #   +files     ~     -   comps  instruction
+   0      419     0     0     161  ADD alpine-minirootfs-3.23.4-x86_64.tar.gz /
+   1     2389     7     0     199  RUN addgroup -g 1000 node && adduser -u 1000 …
+   2       14     6     0       1  RUN apk add --no-cache --virtual .build-deps-yarn …
+   3        1     0     0       0  COPY docker-entrypoint.sh /usr/local/bin/
+```
+
+This answers "which layer introduced this package, and why is it here?" without
+leaving the terminal. The web UI draws the same data as an interactive stack.
 
 ## Querying the evidence graph
 

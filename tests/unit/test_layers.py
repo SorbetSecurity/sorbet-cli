@@ -298,7 +298,7 @@ def test_layer_stack_json_counts_churn_and_components(tmp_path) -> None:
 
 def test_cli_layers_report_matches_the_stack(tmp_path, capsys) -> None:
     """`sorb layers` renders the same facts the UI draws, from the same store."""
-    from sorb.cli.main import _render_layers
+    from sorb.cli.commands.inspect import _render_layers
 
     store = _layered_store(tmp_path)
     try:

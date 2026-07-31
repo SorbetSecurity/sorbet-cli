@@ -278,6 +278,28 @@ Fixture suites cannot show that a claim about unseen software is true.
 [`validation.md`](./validation.md) records what has been checked against real
 repositories, images and binaries, by what method, and what remains unproven.
 
+## The CLI
+
+`sorb.cli` is a presentation layer and nothing more: parse arguments, call into
+`sorb.core`, render the result. It is split by what a user is trying to do, so
+a command is easy to find and a new one has an obvious home:
+
+| Module | Commands |
+| --- | --- |
+| `cli/app.py` | the Typer application and its sub-groups |
+| `cli/commands/scan.py` | `scan` |
+| `cli/commands/inspect.py` | `explain`, `explain-warning`, `layers`, `query` |
+| `cli/commands/interop.py` | `convert`, `merge`, `diff`, `validate`, `fleet` |
+| `cli/commands/security.py` | `sign`, `attest`, `verify` |
+| `cli/commands/observe.py` | `trace`, `snapshot`, `watch` |
+| `cli/commands/serve.py` | `ui`, `serve` |
+| `cli/commands/admin.py` | `bench`, `accel`, `config`, `cache`, `db`, `self` |
+| `cli/render.py` | output formats and `--fail-on` policy evaluation |
+
+Importing a command module registers its commands, so `cli/main.py` only
+assembles them. Anything expensive is imported *inside* a command body, which
+is what keeps `sorb --help` inside its 300 ms startup budget.
+
 ## Repository layout
 
 ```

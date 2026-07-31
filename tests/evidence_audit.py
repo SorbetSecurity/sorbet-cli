@@ -78,8 +78,12 @@ def _name_variants(name: str) -> list[str]:
     packages are found under their own casing.
     """
     out = {name, name.lower()}
-    out.add(re.sub(r"[-_.]+", "-", name.lower()))
-    out.add(re.sub(r"[-_.]+", "_", name.lower()))
+    # PEP 503 folds runs of `-`, `_` and `.` into a single `-`, so the
+    # canonical name is often spelled differently from the file that declares
+    # it: `jaraco.text` and `dissect.target` are the real spellings behind
+    # `jaraco-text` and `dissect-target`.
+    for separator in ("-", "_", "."):
+        out.add(re.sub(r"[-_.]+", separator, name.lower()))
     for sep in (":", "/"):
         if sep in name:
             out.add(name.rsplit(sep, 1)[-1])

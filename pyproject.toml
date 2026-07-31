@@ -158,6 +158,6 @@ ignore_imports = [
     "sorb.plugin.wasm -> sorb.emit.signing",
     # the `sorb ui` / `sorb serve` commands launch the embedded UI server — the
     # one sanctioned cli→ui seam (co-equal presentation layers).
-    "sorb.cli.main -> sorb.ui.config",
-    "sorb.cli.main -> sorb.ui.runner",
+    "sorb.cli.commands.serve -> sorb.ui.config",
+    "sorb.cli.commands.serve -> sorb.ui.runner",
 ]
