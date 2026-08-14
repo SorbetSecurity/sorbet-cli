@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./docs/assets/logo.png" alt="Sorbet" width="120">
+</p>
+
 # sorb - evidence-backed SBOMs
 
 [![CI](https://github.com/SorbetSecurity/sorbet-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/SorbetSecurity/sorbet-cli/actions/workflows/ci.yml)
@@ -89,8 +93,6 @@ scope** - that's the job of whatever platform consumes the SBOMs downstream.
   evidence model, pipeline, subsystems, storage, plugins, testing.
 - [`docs/plugins.md`](./docs/plugins.md) - writing a cataloger or emitter, and
   the WASM plugin ABI.
-- [`docs/validation.md`](./docs/validation.md) - what has been checked against
-  real repositories, images and binaries, and what has not.
 
 ## Extending
 

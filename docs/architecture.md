@@ -274,9 +274,13 @@ a documented registry (`sorb/data/warnings.toml`, `sorb explain-warning`).
 - Property-based tests use Hypothesis; `ruff`, `mypy --strict`, and
   `lint-imports` gate style, types, and layering.
 
-Fixture suites cannot show that a claim about unseen software is true.
-[`validation.md`](./validation.md) records what has been checked against real
-repositories, images and binaries, by what method, and what remains unproven.
+Fixture suites cannot show that a claim about unseen software is true, which
+is why the suites above are paired with checks against real artifacts: an
+evidence audit that re-derives every emitted component from the bytes it cites
+(`tests/evidence_audit.py`, run as a gate), differential comparison against
+other tools, ground-truth parity against the package managers themselves
+(`rpm -qa`, `dpkg-query`, `brew list`), and validation of emitted documents
+against the formats' official schemas.
 
 ## The CLI
 

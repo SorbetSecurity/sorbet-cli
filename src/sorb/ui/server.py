@@ -455,9 +455,8 @@ def _component_detail_json(store: GraphStore, cid: int) -> dict[str, Any]:
 def _layers_json(store: GraphStore) -> dict[str, Any]:
     """Per-layer stack: churn, components introduced, and base-image origin.
 
-    One pass over file states and components — the previous version re-read
-    every file state once per layer, which on a real image meant thousands of
-    rows scanned N times to produce two counts.
+    Counted in one pass: file states are read once for the whole image, not
+    once per layer.
     """
     from collections import Counter
 

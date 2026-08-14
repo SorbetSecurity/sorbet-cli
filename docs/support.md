@@ -1,8 +1,7 @@
 # Ecosystem support
 
 What `sorb` can read, and what it cannot yet. For how detection works see
-[`architecture.md`](./architecture.md); for what has been checked against real
-software see [`validation.md`](./validation.md).
+[`architecture.md`](./architecture.md).
 
 A format is **supported** when a cataloger reads it and the result is covered
 by a test. Nothing is listed here on the strength of a purl type existing —
