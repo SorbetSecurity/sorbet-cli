@@ -1,43 +1,43 @@
-<p align="center">
-  <img src="./docs/assets/logo.png" alt="Sorbet" width="120">
-</p>
-
-# sorb - evidence-backed SBOMs
+# sorbet-cli : dependency analysis and SBOM generation for code, containers and binaries
 
 [![CI](https://github.com/SorbetSecurity/sorbet-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/SorbetSecurity/sorbet-cli/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
+<img src="https://raw.githubusercontent.com/SorbetSecurity/sorbet-cli/main/docs/assets/banner.jpg" alt="sorbet-cli - dependency analysis and SBOM generation for code, containers and binaries" width="100%">
+
 **Sorbet CLI** (`sorb`) is an open-source, cross-platform dependency-analysis
-and SBOM-generation engine, delivered as a single self-contained CLI.
+and SBOM-generation tool.
 
 Point it at software - a code repository, a container image, a binary,
-infrastructure config, or a whole machine - and it produces a trustworthy,
+infrastructure config, or a whole machine - and it produces an
 **evidence-backed SBOM** (CycloneDX 1.6, SPDX 2.3/3.0): every component
-carries occurrence evidence, a provenance chain, and a confidence score you
-can drill into down to the raw bytes that produced it.
+carries occurrence evidence, a provenance chain, and a confidence score.
 
 ```bash
 uv tool install sorbet        # or: pipx install sorbet
 sorb scan .                   # scan a repo
-sorb scan image:alpine:3.20   # scan a container image, layer-accurately
-sorb ui                       # explore the evidence graph locally, fully offline
+sorb scan image:alpine:3.20   # scan a container image, per layer
+sorb ui                       # browse the results in a local web UI
 ```
 
-## Why sorb
+<img src="https://raw.githubusercontent.com/SorbetSecurity/sorbet-cli/main/docs/assets/demo.gif" alt="scanning this repository, then asking why one component is in the SBOM" width="820">
 
-- **Explainable, not just plausible.** `sorb explain <component>` shows *why*
-  every component is in your SBOM: which detector found it, in which file, at
-  which bytes, and how its confidence was computed. No silent guessing.
-- **Offline-first.** No telemetry, no phone-home. Network access is opt-in
-  per scan (`--allow-net`); `--offline` is an absolute kill-switch.
-- **Contained failure.** A single unparseable file becomes an `analysis-gap`
-  annotation, never a dead scan.
-- **Reproducible.** `--reproducible` yields byte-identical SBOMs
-  (`SOURCE_DATE_EPOCH` honored) - diff-able in CI.
-- **A real dependency graph underneath.** Every scan writes an SQLite evidence
-  graph that `explain`, `query`, `diff`, `merge`, `fleet`, and the UI all
-  share - SBOM files are views over it, and any result exports as a
-  CycloneDX/SPDX subgraph.
+## Features
+
+- **Explainable output.** `sorb explain <component>` reports which detector
+  found a component, in which file and at which byte range, and how its
+  confidence was derived.
+- **Offline by default.** Network access is opt-in per scan (`--allow-net`);
+  `--offline` disables it entirely. No telemetry.
+- **Contained failures.** An unparseable file becomes an `analysis-gap`
+  annotation instead of failing the scan.
+- **Reproducible output.** With `--reproducible`, scanning unchanged input
+  twice produces the identical file, because timestamps come from
+  `SOURCE_DATE_EPOCH` instead of the clock. An SBOM can then be committed and
+  regenerated in CI, where any diff means a dependency really changed.
+- **A queryable evidence graph.** Each scan writes an SQLite graph shared by
+  `explain`, `query`, `diff`, `merge`, `fleet` and the UI. SBOM files are
+  views over it, and any result exports as a CycloneDX or SPDX subgraph.
 
 ## What it scans
 
@@ -50,20 +50,27 @@ sorb ui                       # explore the evidence graph locally, fully offlin
 | IaC | Terraform, Kubernetes/Helm/Kustomize, CloudFormation, Bicep, Ansible, Dockerfiles - with `--follow-images` chaining referenced images into container scans |
 | Whole machines | `host://` inventories a running host (marking what's *observed running* and on which ports); `disk://` reads disk images agentlessly - no mount, no root |
 
-Beyond package inventories, `sorb` also emits **CBOM** (certificates with
-expiry; private keys flagged, never captured) and **ML-BOM**
-(safetensors/GGUF/ONNX/TorchScript with pickle-risk flags).
+It also inventories two things that are not packages:
 
-## Higher-fidelity modes
+- **Certificates and keys** (a CBOM). Each certificate is recorded with its
+  subject, issuer and expiry date. Private keys are noted as present, but
+  their contents are never read into the SBOM.
+- **Machine-learning models** (an ML-BOM). Safetensors, GGUF, ONNX, PyTorch
+  and pickle files, with their format and tensor metadata. Formats that run
+  code when loaded, such as pickle and TorchScript, are flagged.
 
-Static analysis is the default; two opt-in modes go further:
+## Beyond static analysis
+
+Static analysis is the default. These optional modes gather more:
 
 - `sorb scan --resolve=native` runs the ecosystem's own build tool inside a
-  deny-by-default sandbox (Linux and macOS) and ingests its exact resolution
-  output.
-- `sorb trace -- <cmd>` observes what a process *actually loads* at runtime,
-  surfacing phantom (undeclared) and unused dependencies; `sorb snapshot` and
-  `sorb watch` cover provisioning diffs and long-running observation.
+  deny-by-default sandbox (Linux and macOS) and reads what it resolved.
+- `sorb trace -- <cmd>` runs a command and records which libraries it actually
+  loads, finding dependencies that are used but never declared, and declared
+  but never used.
+- `sorb snapshot` compares installed state before and after a step such as a
+  package install.
+- `sorb watch` records the same as `trace`, but across a longer session.
 
 ## Working with SBOMs
 
@@ -72,18 +79,18 @@ sorb convert other.spdx.json -o cyclonedx-json --loss-report
 sorb merge a.cdx.json b.spdx.json -o cyclonedx-json
 sorb diff v1.cdx.json image:app:2.0 --fail-on-change
 sorb validate sbom.json --require ntia
-sorb sign / attest / verify        # air-gapped DSSE signing & verification
+sorb sign / attest / verify        # air-gapped DSSE signing and verification
 sorb query 'components where confidence < 0.9 | count by ecosystem'
-sorb fleet '.sorb/results/*.sorb.db' -q '…'   # org-scale questions, per host
+sorb fleet '.sorb/results/*.sorb.db' -q '…'   # one question across every scanned host
 ```
 
-CI gating is built in: `--fail-on drift,stale-lockfile,version-conflict,phantom-deps`
-plus stable exit codes, a GitHub Action (`action.yml`), and a container image.
+For CI: `--fail-on drift,stale-lockfile,version-conflict,phantom-deps`, stable
+exit codes, a GitHub Action (`action.yml`), and a container image.
 
 ## Scope
 
-`sorb` generates SBOMs; **vulnerability matching is permanently out of
-scope** - that's the job of whatever platform consumes the SBOMs downstream.
+`sorb` generates SBOMs. Vulnerability matching is out of scope: that is the
+job of whatever platform consumes the SBOMs downstream.
 
 ## Documentation
 
@@ -91,14 +98,16 @@ scope** - that's the job of whatever platform consumes the SBOMs downstream.
   formats, flags, configuration.
 - [`docs/architecture.md`](./docs/architecture.md) - how it's built: the
   evidence model, pipeline, subsystems, storage, plugins, testing.
+- [`docs/support.md`](./docs/support.md) - every ecosystem and file format
+  read, and what is not supported yet.
 - [`docs/plugins.md`](./docs/plugins.md) - writing a cataloger or emitter, and
   the WASM plugin ABI.
 
 ## Extending
 
-Three plugin tiers, all producing findings that are re-validated before they
-touch the graph - a plugin cannot inject unchecked claims, impersonate a
-first-party detector, or assert more confidence than its technique earns:
+Findings from all three plugin tiers are re-validated before they reach the
+graph, so a plugin cannot inject unchecked claims, impersonate a first-party
+detector, or claim more confidence than its technique allows.
 
 - **Entry-point plugins** - trusted Python packages registering catalogers or
   emitters (`examples/sorb-plugin-example/`).
@@ -120,9 +129,9 @@ uv venv --python 3.13 .venv && uv pip install -e ".[dev]" -p .venv/bin/python
 ```
 
 Requires Python ≥ 3.12. The optional Rust accelerator (`native/sorb-accel`)
-is a drop-in speedup adopted only after a byte-identical self-check - the
-pure-Python implementation is always the reference.
+is used only after a load-time check proves its output byte-identical to the
+pure-Python implementation, which remains the reference.
 
 ## License
 
-Apache 2.0. No telemetry, no phone-home - `sorb` is offline-first.
+Apache 2.0.

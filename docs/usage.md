@@ -1,8 +1,8 @@
 # Usage
 
-`sorb` is a single self-contained CLI. Every command works offline by default -
-network access is opt-in per scan (`--allow-net`), and `--offline` is an
-absolute kill-switch.
+`sorb` is a single command-line tool with no services to run. Every command
+works offline by default: network access is opt-in per scan (`--allow-net`),
+and `--offline` disables it entirely.
 
 ## Installation
 
@@ -104,8 +104,8 @@ sorb scan [TARGET] [flags]
 | `docker-archive:TAR` | a `docker save` tarball |
 | `docker:REF` / `podman:REF` / `containerd:REF` | an image via the local daemon/runtime |
 | `container://ID` | a *running* container |
-| `host://` | the running machine (targeted store discovery, no full-disk crawl) |
-| `disk://IMAGE` | a disk image, agentless - no mount, no root (`[disk]` extra for ext4/NTFS/qcow2/…) |
+| `host://` | the running machine — package databases and install directories are read directly, rather than crawling the whole disk |
+| `disk://IMAGE` | a disk image, read without mounting it or needing root (`[disk]` extra for ext4/NTFS/qcow2/…) |
 
 ## `sorb scan` - output
 
@@ -133,8 +133,8 @@ Third-party emitter plugins add their own format names.
 | `--scope runtime\|dev\|all` | emission filter |
 | `--min-confidence F` | drop components below a confidence threshold |
 | `--paranoid` | only components backed by locked-tier-or-better evidence |
-| `--offline` | absolute network kill-switch |
-| `--resolve pure\|native\|off` | `native` runs the ecosystem's own build tool inside a deny-by-default sandbox and ingests its exact output (Linux and macOS; see below) |
+| `--offline` | disable all network access |
+| `--resolve pure\|native\|off` | `native` runs the ecosystem's own build tool inside a deny-by-default sandbox and reads what it resolved (Linux and macOS; see below) |
 | `--allow-net HOST` | hosts the sandbox/enrichment may reach (repeatable) |
 | `--platform linux/arm64` | image platform (default `linux/amd64`) |
 | `--all-platforms` | scan every platform in a multi-arch index |

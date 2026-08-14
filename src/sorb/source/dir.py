@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import unicodedata
 from collections.abc import Iterator
@@ -47,6 +48,17 @@ def _sha256_file(path: Path) -> str:
     return hash_file(path)
 
 
+def _redact_remote(url: str) -> str:
+    """Drop any userinfo from a remote URL.
+
+    A remote often carries a credential as userinfo (`https://user:token@host/…`,
+    or a bare `https://token@host/…`). The remote becomes the scan subject and
+    reaches emitted SBOMs, so it must never carry one. Only `scheme://` forms are
+    touched; scp-style `git@host:owner/repo` has no userinfo to strip.
+    """
+    return re.sub(r"^([a-zA-Z][a-zA-Z0-9+.\-]*://)[^/@]*@", r"\1", url)
+
+
 def _git_provenance(root: Path) -> dict[str, str]:
     facts: dict[str, str] = {}
     if not (root / ".git").exists():
@@ -63,7 +75,7 @@ def _git_provenance(root: Path) -> dict[str, str]:
             capture_output=True, text=True, timeout=5, check=False,
         )
         if remote.returncode == 0 and remote.stdout.strip():
-            facts["git_remote"] = remote.stdout.strip()
+            facts["git_remote"] = _redact_remote(remote.stdout.strip())
     except (OSError, subprocess.SubprocessError):
         pass
     return facts

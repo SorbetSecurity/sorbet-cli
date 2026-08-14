@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1442" height="768" viewBox="0 0 1442 768">
+<rect width="1442" height="768" fill="#ffffff"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#9aa5b1"/></marker></defs>
+<line x1="44" y1="42" x2="44" y2="730" stroke="#9aa5b1" stroke-width="2.5" marker-end="url(#a)"/>
+<text x="30" y="384.0" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-style="italic" fill="#6b7280" transform="rotate(-90 30 384.0)">imports may only point downward</text>
+<rect x="92" y="34" width="960" height="86" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="469.25" y="56" width="100.4" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="519.45" y="83" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.cli</text>
+<rect x="583.65" y="56" width="91.10000000000001" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="629.1999999999999" y="83" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.ui</text>
+<text x="1078" y="73.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">presentation</text>
+<text x="1078" y="99.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">thin adapters, no logic of their own</text>
+<rect x="92" y="146" width="960" height="86" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="517.15" y="168" width="109.7" height="42" rx="9" fill="#fdf0d5" stroke="#e5c07b" stroke-width="1.6"/>
+<text x="572.0" y="195" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.core</text>
+<text x="1078" y="185.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">orchestration</text>
+<text x="1078" y="211.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">runs the scan pipeline</text>
+<rect x="92" y="258" width="960" height="140" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="213.95" y="280" width="165.5" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="296.7" y="307" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.catalogers</text>
+<rect x="393.45" y="280" width="128.3" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="457.6" y="307" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.binary</text>
+<rect x="535.75" y="280" width="156.20000000000002" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="613.85" y="307" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.container</text>
+<rect x="705.95" y="280" width="100.4" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="756.1500000000001" y="307" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.iac</text>
+<rect x="820.35" y="280" width="109.7" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="875.2" y="307" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.host</text>
+<rect x="294.4" y="334" width="137.60000000000002" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="363.2" y="361" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.resolve</text>
+<rect x="446.0" y="334" width="137.60000000000002" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="514.8" y="361" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.dynamic</text>
+<rect x="597.6" y="334" width="109.7" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="652.45" y="361" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.emit</text>
+<rect x="721.3000000000001" y="334" width="128.3" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="785.45" y="361" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.plugin</text>
+<text x="1078" y="324.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">analysis</text>
+<text x="1078" y="350.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">find and interpret dependencies</text>
+<rect x="92" y="424" width="960" height="86" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="374.85" y="446" width="128.3" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="439.0" y="473" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.source</text>
+<rect x="517.1500000000001" y="446" width="119.0" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="576.6500000000001" y="473" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.cache</text>
+<rect x="650.1500000000001" y="446" width="119.0" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="709.6500000000001" y="473" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.graph</text>
+<text x="1078" y="463.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">acquisition and storage</text>
+<text x="1078" y="489.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">fetch bytes, cache them, store the graph</text>
+<rect x="92" y="536" width="960" height="86" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="512.5" y="558" width="119.0" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="572.0" y="585" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.ident</text>
+<text x="1078" y="575.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">identity</text>
+<text x="1078" y="601.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">purls, CPEs, license identifiers</text>
+<rect x="92" y="648" width="960" height="86" rx="14" fill="#eef2fb" stroke="#c3d2ee" stroke-width="2"/>
+<rect x="360.9" y="670" width="119.0" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="420.4" y="697" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.model</text>
+<rect x="493.9" y="670" width="128.3" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="558.05" y="697" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.errors</text>
+<rect x="636.2" y="670" width="146.9" height="42" rx="9" fill="#ffffff" stroke="#c3d2ee" stroke-width="1.6"/>
+<text x="709.6500000000001" y="697" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#14346b">sorb.warnings</text>
+<text x="1078" y="687.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#14346b">foundation</text>
+<text x="1078" y="713.0" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" fill="#6b7280">imports nothing else in sorb</text>
+</svg>

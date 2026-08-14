@@ -75,3 +75,43 @@ def test_host_walk_records_what_it_could_not_read(tmp_path, monkeypatch) -> None
     monkeypatch.setattr(type(root), "iterdir", deny)
     list(source.walk())
     assert source.unreadable_count > 0
+
+
+def test_git_remote_credentials_never_reach_provenance(tmp_path: Path) -> None:
+    """A token embedded in the origin URL must not become the scan subject.
+
+    Cloning with a PAT leaves `https://user:token@host/…` in the remote. That
+    string was recorded verbatim as the subject and copied into every emitted
+    SBOM, so committing a generated SBOM published the token.
+    """
+    import subprocess
+
+    from sorb.source.dir import _redact_remote
+
+    secret = "ghp_EXAMPLETOKENVALUE0000000000000000"  # noqa: S105 — fixture, not a credential
+    for url, want in [
+        (f"https://alice:{secret}@github.com/o/r.git", "https://github.com/o/r.git"),
+        (f"https://{secret}@github.com/o/r.git", "https://github.com/o/r.git"),
+        ("ssh://git@github.com/o/r.git", "ssh://github.com/o/r.git"),
+        ("https://github.com/o/r.git", "https://github.com/o/r.git"),
+        ("git@github.com:o/r.git", "git@github.com:o/r.git"),  # scp form: no userinfo
+    ]:
+        got = _redact_remote(url)
+        assert got == want, f"{url} -> {got}"
+        assert secret not in got
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    def run(*a: str) -> None:
+        subprocess.run(["git", "-C", str(repo), *a], capture_output=True, check=True)
+
+    run("init", "-q")
+    run("remote", "add", "origin", f"https://alice:{secret}@github.com/o/r.git")
+    (repo / "f.txt").write_text("x")
+    run("-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
+    run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x")
+
+    prov = DirSource(repo).provenance()
+    assert secret not in prov.subject
+    assert secret not in repr(prov.facts)
+    assert prov.subject == "git:https://github.com/o/r.git"

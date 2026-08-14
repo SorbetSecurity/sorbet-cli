@@ -10,25 +10,24 @@ does and how to use it, see [`usage.md`](./usage.md).
   package-DB record, an embedded buildinfo section, a runtime observation),
   each with a file/span reference, an evidence tier, and a confidence score.
 - **Offline first.** A scan never touches the network unless explicitly
-  allowed (`--allow-net`); `--offline` is an absolute kill-switch. There is no
-  telemetry.
-- **Contained failure.** One unparseable file must never kill a scan. Detector
-  failures are converted into warnings plus `analysis-gap` annotations on the
-  affected scope, and the scan continues.
+  allowed (`--allow-net`); `--offline` disables network access entirely. There
+  is no telemetry.
+- **Contained failure.** One unparseable file must not end a scan. A detector
+  failure becomes a warning plus an `analysis-gap` annotation on the affected
+  scope, and the scan continues — the result says what could not be read
+  rather than pretending it was not there.
 - **Pure Python is the reference.** The optional native accelerator
-  (`sorb-accel`) is selected only after a load-time self-check proves its
-  output byte-identical to the pure implementation; it can speed things up but
-  never change results.
+  (`sorb-accel`) is used only after a load-time check proves its output
+  byte-identical to the pure implementation, so it can change how long a scan
+  takes but not what it finds.
 - **Determinism.** With `--reproducible`, output is byte-identical across runs
   (canonical JSON serialization, `SOURCE_DATE_EPOCH` honored).
 
 ## Process model
 
-A scan is a single-process pipeline - no daemon, no worker fleet:
+A scan runs as one process, with no daemon and no worker pool:
 
-```
-acquire → walk → detect → ingest → reconcile → drift → finalize
-```
+<img src="assets/pipeline.svg" alt="the seven scan stages, and the per-layer loop a container target takes through them" width="860">
 
 Container targets (`image:`, `oci-dir:`, `docker-archive:`, `docker:`,
 `podman:`, `containerd:`, `container://`) dispatch to a container-scan
@@ -48,17 +47,7 @@ Separate processes appear in exactly three places, each a trust boundary:
 Imports point strictly downward; the boundary is enforced in CI by
 import-linter (see the contract in `pyproject.toml`):
 
-```
-sorb.cli            sorb.ui              ← presentation (thin adapters)
-        sorb.core                        ← orchestration: pipeline, config,
-                                           reconcile, merge/diff/explain
-sorb.catalogers  sorb.binary  sorb.container  sorb.iac  sorb.host
-sorb.resolve     sorb.dynamic sorb.emit       sorb.plugin
-                                         ← analysis subsystems
-sorb.source      sorb.cache   sorb.graph ← acquisition & storage
-        sorb.ident                       ← identity: purl, CPE, licenses
-sorb.model   sorb.errors   sorb.warnings ← foundation (no internal deps)
-```
+<img src="assets/layers.svg" alt="the six package layers, from presentation down to foundation" width="860">
 
 A few sanctioned cross-seams exist where a cataloger wraps a sibling
 subsystem's parsers (binary formats, IaC parsers, the Windows registry
@@ -87,10 +76,12 @@ Frozen dataclasses, serializable to/from JSON:
 - **`Finding`** - the unit a detector yields: claims + evidence + edges +
   annotations.
 
-Confidence is computed during reconciliation from the agreeing/disagreeing
-evidence tiers (a noisy-OR style combination with per-ecosystem base rates in
-`sorb/data/base_rates.toml`), so every score is explainable - `sorb explain`
-shows the full derivation.
+Confidence is computed during reconciliation from the evidence that agrees
+and disagrees. Independent sources each raise the score without any one of them
+reaching certainty (a noisy-OR combination), starting from per-technique base
+rates in `sorb/data/base_rates.toml` and capped by the highest evidence tier
+present. Every score is therefore derived rather than assigned, and
+`sorb explain` prints the derivation.
 
 A claim that names a package without resolving it (a manifest range, a
 build-system requirement) carries its spec in `requested` and no version - a
@@ -113,16 +104,18 @@ hives directly (`sorb.host.regf`).
 
 ## Catalogers (`sorb.catalogers`)
 
-A cataloger declares `Matcher`s (basename/glob patterns) and a
-`parse(ctx, entry, blob) → Iterable[Finding]` method; a dispatch table routes
-walked entries to every matching cataloger. Ecosystem coverage includes
-npm/pnpm/yarn, Python, Go, JVM (Maven POM model, Gradle locks, JAR analysis),
-.NET, Ruby, PHP, Rust, C/C++ (vcpkg, Conan, CMake File API), mobile
-(APK/AAB/IPA), OS packages (dpkg/apk/pacman/rpm), Windows registry, IaC
-(Terraform, Kubernetes/Helm/Kustomize, CloudFormation, Bicep, Ansible,
-Dockerfiles), plus CBOM (certificates/keys) and ML-BOM (model files) and a
-table-driven framework (`table.py` + `table_specs.py`) for long-tail lockfile
-formats.
+A cataloger declares `Matcher`s (basename or glob patterns) and a
+`parse(ctx, entry, blob) → Iterable[Finding]` method. A dispatch table routes
+each walked entry to every cataloger whose matchers accept it, so adding a
+format does not touch the walk.
+
+Two kinds exist. Most lockfiles are declarative and need no parser code: one
+`LockfileSpec` entry in `table_specs.py` produces a working cataloger with
+evidence spans, purls and hashes. Formats that are not JSON/YAML/TOML, or whose
+identity needs real work, get a hand-written cataloger instead.
+
+[`support.md`](./support.md) lists every format currently read; it is the one
+place that list is maintained.
 
 ## Binary analysis (`sorb.binary`)
 
@@ -198,8 +191,9 @@ through, and it never treats an unbound subject as good enough.
 A small DSL (`components where … | count by …`, `paths from … to …`) with a
 hand-written parser and an engine that runs over any graph store. Shared by
 `sorb query`, `sorb fleet -q`, and the UI's `/api/query`. `sorb.host.fleet`
-merges many run stores digest-first with per-source provenance for org-scale
-questions.
+merges many run stores into one graph, deduplicating components by identity
+while keeping per-source provenance, so a query over a whole estate returns
+rows that name the host each match came from.
 
 ## Web UI (`sorb.ui`)
 
@@ -248,39 +242,6 @@ A small taxonomy maps to stable exit codes: 0 success, 1 scan errors,
 containment workhorse: caught per file, recorded as a warning +
 `analysis-gap` annotation, never propagated. Warning codes (`SORB-Wxxx`) are
 a documented registry (`sorb/data/warnings.toml`, `sorb explain-warning`).
-
-## Testing
-
-- `tests/unit/` - per-subsystem unit tests (network-blocked by conftest).
-- `tests/test_e2e.py`, `test_container_e2e.py` - end-to-end scans over
-  fixtures.
-- `tests/corpus/` - a precision/recall gate: scans of a polyglot fixture are
-  compared against `expected.json`; accuracy regressions fail CI. Fixture
-  trees store deliberately-gitignored paths under neutral names (`gitignore`,
-  `_node_modules`, `_venv`); the harness renames them into place when it
-  materializes a pristine copy for a scan.
-- `tests/differential/` - differential comparison against competitor output
-  with a triage ledger, so known deltas are explicit. The recorded fixtures
-  are refreshed by `differential_harness.py --refresh` in the scheduled job,
-  which pins the competitor versions; every disagreement it then finds must
-  carry a ledger verdict and rationale or the job fails.
-- `sorb bench` - perf regression + startup budget gates, run in CI.
-- `sorb.fuzz` + `fuzz/` - deterministic in-process fuzz smoke tests per
-  byte-parser family (parsers may raise, never crash/hang/OOM), plus OSS-Fuzz
-  targets.
-- A global pytest timeout backs the same contract for parsers the fuzz targets
-  don't cover: a hang is a worse failure than a crash, so it fails a test
-  rather than stalling CI.
-- Property-based tests use Hypothesis; `ruff`, `mypy --strict`, and
-  `lint-imports` gate style, types, and layering.
-
-Fixture suites cannot show that a claim about unseen software is true, which
-is why the suites above are paired with checks against real artifacts: an
-evidence audit that re-derives every emitted component from the bytes it cites
-(`tests/evidence_audit.py`, run as a gate), differential comparison against
-other tools, ground-truth parity against the package managers themselves
-(`rpm -qa`, `dpkg-query`, `brew list`), and validation of emitted documents
-against the formats' official schemas.
 
 ## The CLI
 
