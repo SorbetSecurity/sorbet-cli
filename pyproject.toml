@@ -1,5 +1,5 @@
 [project]
-name = "sorbet"
+name = "sorb"
 version = "0.1.0"
 description = "Sorbet CLI (sorb) — evidence-backed dependency analysis and SBOM generation engine"
 readme = "README.md"

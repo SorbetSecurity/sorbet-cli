@@ -14,7 +14,7 @@ infrastructure config, or a whole machine - and it produces an
 carries occurrence evidence, a provenance chain, and a confidence score.
 
 ```bash
-uv tool install sorbet        # or: pipx install sorbet
+uv tool install sorb        # or: pipx install sorb
 sorb scan .                   # scan a repo
 sorb scan image:alpine:3.20   # scan a container image, per layer
 sorb ui                       # browse the results in a local web UI
@@ -112,9 +112,9 @@ detector, or claim more confidence than its technique allows.
 - **Entry-point plugins** - trusted Python packages registering catalogers or
   emitters (`examples/sorb-plugin-example/`).
 - **WASM plugins** - untrusted, must be signed, run with no filesystem,
-  network, or environment access and a CPU-fuel cap (`pip install 'sorbet[wasm]'`).
+  network, or environment access and a CPU-fuel cap (`pip install 'sorb[wasm]'`).
 - **gRPC plugins** - out-of-process services, contacted only when named in
-  trusted config (`pip install 'sorbet[grpc]'`).
+  trusted config (`pip install 'sorb[grpc]'`).
 
 The last two are declared per project in `sorb.toml`; see
 [`docs/plugins.md`](./docs/plugins.md) for the ABI and configuration.

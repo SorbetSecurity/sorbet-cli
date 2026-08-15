@@ -7,9 +7,9 @@ and `--offline` disables it entirely.
 ## Installation
 
 ```bash
-uv tool install sorbet        # recommended
-pipx install sorbet           # or pipx
-pip install sorbet            # plain pip works too
+uv tool install sorb        # recommended
+pipx install sorb           # or pipx
+pip install sorb            # plain pip works too
 ```
 
 Or grab a standalone bundle - no Python needed - from the
@@ -31,10 +31,10 @@ Optional extras:
 
 | Extra | Enables | Install |
 | --- | --- | --- |
-| `ui` | the embedded web explorer (`sorb ui` / `sorb serve`) | `pip install "sorbet[ui]"` |
-| `disk` | qcow2/VMDK/ext4/XFS/Btrfs/NTFS/LVM disk-image scanning | `pip install "sorbet[disk]"` |
-| `wasm` | sandboxed WASM cataloger plugins | `pip install "sorbet[wasm]"` |
-| `grpc` | out-of-process gRPC plugins | `pip install "sorbet[grpc]"` |
+| `ui` | the embedded web explorer (`sorb ui` / `sorb serve`) | `pip install "sorb[ui]"` |
+| `disk` | qcow2/VMDK/ext4/XFS/Btrfs/NTFS/LVM disk-image scanning | `pip install "sorb[disk]"` |
+| `wasm` | sandboxed WASM cataloger plugins | `pip install "sorb[wasm]"` |
+| `grpc` | out-of-process gRPC plugins | `pip install "sorb[grpc]"` |
 
 The base install intentionally stays lean; extras only affect their own
 subcommands.

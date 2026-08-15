@@ -25,7 +25,7 @@ import is skipped with a warning, never fatal.
 
 ## WASM plugins
 
-Untrusted code, strongly isolated: `pip install 'sorbet[wasm]'`. A plugin is a
+Untrusted code, strongly isolated: `pip install 'sorb[wasm]'`. A plugin is a
 signed `.wasm` module, and an unsigned or tampered one is refused before it is
 instantiated. Once loaded it gets no filesystem, no network, no environment and
 no stdio - only the bytes of files it matched - plus a CPU-fuel budget and a
@@ -79,7 +79,7 @@ A trap, a fuel exhaustion, an oversized return, or a missing export becomes an
 ## gRPC plugins
 
 For integrations where WASM is too restrictive - cloud snapshot providers,
-proprietary registries: `pip install 'sorbet[grpc]'`. A gRPC plugin runs as a
+proprietary registries: `pip install 'sorb[grpc]'`. A gRPC plugin runs as a
 user-launched process with the host's privileges, so it is contacted **only**
 when the endpoint is named in trusted config. Channels are TLS by default;
 plaintext is opt-in per endpoint.
