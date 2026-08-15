@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: ${{ matrix.python }}
+      # `wasm` is installed so the WASM plugin ABI tests run rather than skip;
+      # every other optional runtime is exercised through in-process fakes.
+      - name: Install
+        run: uv pip install --system -e ".[dev,wasm]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Types
+        run: mypy
+      - name: Layer contracts
+        run: lint-imports
+      - name: Tests (network-blocked)
+        run: pytest -q --cov=sorb --cov-report=term:skip-covered
+      # `sorb bench` owns the startup budget and the perf-regression gate, so
+      # running it here also proves the command itself works.
+      - name: Perf gates
+        run: sorb bench --iterations 1
+
+  differential:
+    # Competitor comparison needs their binaries, so it runs on a schedule and
+    # on demand rather than blocking every PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Install syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+          syft version
+      - name: Refresh the recorded competitor output
+        run: python tests/differential/differential_harness.py --refresh
+      - name: Differential gate (every disagreement must be in the ledger)
+        run: pytest tests/test_accuracy_gates.py -q -k differential
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-fixtures
+          path: tests/differential/fixtures/*.json

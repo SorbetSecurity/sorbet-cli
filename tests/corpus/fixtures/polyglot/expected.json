@@ -1,0 +1,36 @@
+{
+  "components": [
+    {"name": "colorama", "version": null, "tier": "declared", "ecosystem": "pypi", "conditional": true},
+    {"name": "hatchling", "version": null, "tier": "declared", "ecosystem": "pypi", "scope": "build"},
+    {"name": "itoa", "version": "1.0.11", "tier": "locked", "ecosystem": "cargo"},
+    {"name": "serde", "version": "1.0.203", "tier": "locked", "ecosystem": "cargo"},
+    {"name": "libc6", "version": "2.36-9+deb12u7", "tier": "installed", "ecosystem": "deb", "scope": "runtime"},
+    {"name": "libssl3", "version": "3.0.13-1~deb12u1", "tier": "installed", "ecosystem": "deb", "scope": "runtime"},
+    {"name": "github.com/acme/mux", "version": "v1.8.2", "tier": "declared", "ecosystem": "golang"},
+    {"name": "github.com/gorilla/mux", "version": "v1.8.1", "tier": "locked", "ecosystem": "golang", "scope": "runtime"},
+    {"name": "github.com/stray/extra", "version": "v0.9.0", "tier": "locked", "ecosystem": "golang"},
+    {"name": "golang.org/x/text", "version": "v0.14.0", "tier": "locked", "ecosystem": "golang", "scope": "runtime"},
+    {"name": "debug", "version": "4.3.4", "tier": "installed", "ecosystem": "npm", "scope": "runtime"},
+    {"name": "left-pad", "version": "1.3.0", "tier": "installed", "ecosystem": "npm", "scope": "dev"},
+    {"name": "leftover-junk", "version": "0.0.7", "tier": "installed", "ecosystem": "npm"},
+    {"name": "lodash", "version": "4.17.21", "tier": "installed", "ecosystem": "npm", "scope": "runtime"},
+    {"name": "ms", "version": "2.1.2", "tier": "installed", "ecosystem": "npm", "scope": "runtime"},
+    {"name": "pnpm", "version": "9.1.0", "tier": "declared", "ecosystem": "npm", "scope": "build"},
+    {"name": "http", "version": "1.2.1", "tier": "locked", "ecosystem": "pub"},
+    {"name": "path", "version": "1.9.0", "tier": "locked", "ecosystem": "pub"},
+    {"name": "requests", "version": "2.32.0", "tier": "installed", "ecosystem": "pypi", "scope": "runtime"},
+    {"name": "urllib3", "version": "2.2.1", "tier": "locked", "ecosystem": "pypi", "scope": "runtime"}
+  ],
+  "annotation_codes": [
+    "drift:declared-not-installed",
+    "drift:installed-not-declared",
+    "drift:locked-vs-installed",
+    "gosum-superset",
+    "stale-lockfile"
+  ],
+  "drift": {
+    "drift:locked-vs-installed": ["requests"],
+    "drift:installed-not-declared": ["leftover-junk"],
+    "drift:declared-not-installed": ["urllib3"]
+  }
+}

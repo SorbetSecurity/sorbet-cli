@@ -1,0 +1,64 @@
+{
+  "components": [
+    {
+      "type": "library",
+      "name": "itoa",
+      "purl": "pkg:cargo/itoa@1.0.11"
+    },
+    {
+      "type": "library",
+      "name": "serde",
+      "purl": "pkg:cargo/serde@1.0.203"
+    },
+    {
+      "type": "library",
+      "name": "example.com/polyglot",
+      "purl": "pkg:golang/example.com/polyglot"
+    },
+    {
+      "type": "library",
+      "name": "github.com/acme/mux",
+      "purl": "pkg:golang/github.com/acme/mux@v1.8.2"
+    },
+    {
+      "type": "library",
+      "name": "golang.org/x/text",
+      "purl": "pkg:golang/golang.org/x/text@v0.14.0"
+    },
+    {
+      "type": "library",
+      "name": "debug",
+      "purl": "pkg:npm/debug@4.3.4"
+    },
+    {
+      "type": "library",
+      "name": "lodash",
+      "purl": "pkg:npm/lodash@4.17.21"
+    },
+    {
+      "type": "library",
+      "name": "ms",
+      "purl": "pkg:npm/ms@2.1.2"
+    },
+    {
+      "type": "library",
+      "name": "http",
+      "purl": "pkg:pub/http@1.2.1"
+    },
+    {
+      "type": "library",
+      "name": "path",
+      "purl": "pkg:pub/path@1.9.0"
+    },
+    {
+      "type": "library",
+      "name": "requests",
+      "purl": "pkg:pypi/requests@2.31.0"
+    },
+    {
+      "type": "library",
+      "name": "urllib3",
+      "purl": "pkg:pypi/urllib3@2.2.1"
+    }
+  ]
+}

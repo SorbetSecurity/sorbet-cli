@@ -1,0 +1,7 @@
+{
+  "name": "base-images",
+  "schema": 1,
+  "min_sorb_version": "0.1.0",
+  "comment": "Built-in seed pack. Real layer chains are distributed as a signed OCI data pack via `sorb db update` (Arch §17); the seed ships empty rather than guessing digests (Design §3.7 honesty).",
+  "images": []
+}

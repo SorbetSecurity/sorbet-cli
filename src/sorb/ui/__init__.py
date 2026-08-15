@@ -1,0 +1,1 @@
+"""Embedded web UI server."""

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sorb-plugin-example"
+version = "0.1.0"
+description = "Example third-party sorb cataloger + emitter plugin"
+requires-python = ">=3.11"
+dependencies = []
+
+# Entry points are the whole point: installing this package makes `sorb`
+# discover the cataloger and emitter below — no core change, no registration
+# call. The cataloger runs in-process through the same Cataloger ABC as
+# first-party code; its findings carry a `plugin:acme/...` namespaced detector.
+[project.entry-points."sorb.catalogers"]
+acme = "sorb_plugin_example:AcmeLockCataloger"
+
+[project.entry-points."sorb.emitters"]
+acme = "sorb_plugin_example:AcmeCsvEmitter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sorb_plugin_example"]

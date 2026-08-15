@@ -1,0 +1,23 @@
+Package: libssl3
+Status: install ok installed
+Priority: optional
+Section: libs
+Architecture: amd64
+Source: openssl
+Version: 3.0.13-1~deb12u1
+Depends: libc6 (>= 2.34)
+Description: Secure Sockets Layer toolkit - shared libraries
+
+Package: libc6
+Status: install ok installed
+Priority: required
+Architecture: amd64
+Source: glibc
+Version: 2.36-9+deb12u7
+Description: GNU C Library: Shared libraries
+
+Package: removed-pkg
+Status: deinstall ok config-files
+Architecture: amd64
+Version: 1.0-1
+Description: should not appear

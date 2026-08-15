@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "comment": "Triage ledger: every purl-level disagreement with a competitor tool is triaged as our-fn (we miss it), their-fp (they invent it), their-fn (they miss it), or intentional (design decision). A rationale is required, and a disagreement without an entry fails the differential job. Recorded against the syft version the scheduled job pins; `differential_harness.py --refresh` re-records competitor output, after which stale entries must be removed rather than left to rot.",
+  "entries": [
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:golang/github.com/gorilla/mux@v1.8.1",
+      "verdict": "intentional",
+      "rationale": "go.mod replaces acme/mux with gorilla/mux; sorb emits both sides joined by a RESOLVED_FROM edge so the SBOM shows what was asked for and what was built. syft emits only the replaced-to module under the original's name."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:golang/github.com/stray/extra@v0.9.0",
+      "verdict": "intentional",
+      "rationale": "A go.sum entry with no go.mod requirement. Emitted with an explicit gosum-superset annotation rather than silently; syft skips sum-only modules. Revisit once full MVS resolution lands."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:npm/pnpm@9.1.0",
+      "verdict": "intentional",
+      "rationale": "The package.json packageManager field is recorded as a build-tool component; syft ignores it."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:npm/left-pad@1.3.0",
+      "verdict": "their-fn",
+      "rationale": "A devDependency that is both locked and installed under node_modules. syft reports neither; sorb reports it at installed tier with scope=dev, so --scope runtime can drop it by choice instead of by omission."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:npm/leftover-junk@0.0.7",
+      "verdict": "their-fn",
+      "rationale": "Present in node_modules with no lockfile entry. syft does not catalog it; sorb reports it at installed tier with a drift:installed-not-declared annotation and reduced confidence \u2014 an unaccounted-for package on disk is exactly what an SBOM should surface."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u7",
+      "verdict": "intentional",
+      "rationale": "syft does detect this package from the embedded rootfs dpkg status, but emits it with no purl because it finds no distro release file, so it is invisible to purl-level comparison. sorb assigns the deb/debian purl from the package DB itself."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:deb/debian/libssl3@3.0.13-1~deb12u1",
+      "verdict": "intentional",
+      "rationale": "Same as libc6: detected by both, but only sorb gives it a purl."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-theirs",
+      "purl": "pkg:npm/polyglot-app@1.0.0",
+      "verdict": "intentional",
+      "rationale": "The scanned project itself. sorb models it as the document subject and a project node in the graph, not as one of its own dependencies."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-theirs",
+      "purl": "pkg:pypi/requests@2.31.0",
+      "verdict": "intentional",
+      "rationale": "poetry.lock is stale: it locks 2.31.0 while 2.32.0 is installed. syft emits both versions as separate components, implying both are present. sorb emits one component pinned to the installed 2.32.0 with a drift:locked-vs-installed annotation recording what the lock claimed."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:pypi/colorama",
+      "verdict": "intentional",
+      "rationale": "Declared with an environment marker and never resolved to a version. sorb emits a versionless purl so downstream tooling still has an identity to match on, plus conditional=true; syft emits nothing for unresolved declarations."
+    },
+    {
+      "target": "polyglot",
+      "tool": "syft",
+      "kind": "only-ours",
+      "purl": "pkg:pypi/hatchling",
+      "verdict": "intentional",
+      "rationale": "A build-system requirement with no resolved version. Emitted with a versionless purl and scope=build so it can be filtered by choice; syft does not report build-system requires."
+    }
+  ]
+}
