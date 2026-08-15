@@ -7,7 +7,10 @@ Bubblewrap-style, own implementation via ctypes/libc — no external helper:
   guarantee is structural (no interfaces exist), not filter-based; with
   ``--allow-net`` the net namespace is simply not unshared (host-level
   allowlisting is the enrichment cache's job — a deliberate coarseness);
-- ``CLONE_NEWNS`` + a private tmpfs mounted over the scratch HOME;
+- ``CLONE_NEWNS`` + ``pivot_root`` into a minimal tmpfs root holding only the
+  system toolchain roots, ``extra_read_paths``, the project (rw) and a private
+  tmpfs HOME — the old root is lazily detached, so nothing else on the host
+  filesystem is reachable;
 - a small **seccomp** BPF blocklist (ptrace, process_vm_*, kexec, module
   loading, reboot) applied via ``prctl(PR_SET_SECCOMP)`` after
   ``PR_SET_NO_NEW_PRIVS`` — hardening on top of the namespaces;
@@ -38,6 +41,27 @@ SECCOMP_MODE_FILTER = 2
 
 MS_NOSUID = 2
 MS_NODEV = 4
+MS_BIND = 0x1000
+MS_REC = 0x4000
+MS_PRIVATE = 1 << 18
+MNT_DETACH = 2
+
+_SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
+
+#: host roots every toolchain may read (mirrors macos._SYSTEM_READ_ROOTS);
+#: /run itself is excluded — /run/user/<uid> holds live agent sockets
+_SYSTEM_READ_ROOTS = (
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/libx32",
+    "/etc",
+    "/opt",
+    "/run/systemd/resolve",
+)
 
 # BPF constants for the seccomp filter program
 _BPF_LD, _BPF_W, _BPF_ABS = 0x00, 0x00, 0x20
@@ -110,7 +134,7 @@ def _bpf_filter(arch: int, syscall_numbers: list[int]) -> bytes:
     return b"".join(prog)
 
 
-def _apply_seccomp() -> None:
+def _apply_seccomp(libc: ctypes.CDLL) -> None:
     import platform as _platform
 
     machine = _platform.machine()
@@ -128,11 +152,77 @@ def _apply_seccomp() -> None:
         _fields_ = (("len", ctypes.c_ushort), ("filter", ctypes.c_void_p))
 
     prog = SockFprog(len(filter_bytes) // 8, ctypes.cast(buf, ctypes.c_void_p))
-    libc = _libc()
     if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "PR_SET_NO_NEW_PRIVS failed")
     if libc.prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ctypes.byref(prog), 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "seccomp filter installation failed")
+
+
+def _mount(
+    libc: ctypes.CDLL,
+    source: bytes,
+    target: str,
+    fstype: bytes | None,
+    flags: int,
+    data: bytes | None,
+    what: str,
+) -> None:
+    if libc.mount(source, target.encode(), fstype, flags, data) != 0:
+        raise OSError(ctypes.get_errno(), f"{what} at {target} failed")
+
+
+def _bind(libc: ctypes.CDLL, src: str, dst: str) -> None:
+    if os.path.isdir(src):
+        os.makedirs(dst, exist_ok=True)
+    elif not os.path.exists(dst):
+        open(dst, "w").close()  # noqa: SIM115 — bind target, closed immediately
+    _mount(libc, src.encode(), dst, None, MS_BIND | MS_REC, None, "bind mount")
+
+
+def _enter_minimal_root(libc: ctypes.CDLL, spec: SandboxSpec) -> None:
+    """pivot_root into a tmpfs holding only what the spec declares visible."""
+    machine = os.uname().machine
+    pivot_nr = _SYS_PIVOT_ROOT.get(machine)
+    if pivot_nr is None:
+        raise OSError(f"pivot_root syscall number unknown for {machine}")
+    # stop mount events from propagating back to the host namespace
+    _mount(libc, b"none", "/", None, MS_REC | MS_PRIVATE, None, "making mounts private")
+    import tempfile
+
+    root = tempfile.mkdtemp(prefix=".sorb-root-")
+    _mount(libc, b"tmpfs", root, b"tmpfs", MS_NOSUID | MS_NODEV, b"mode=0755", "root tmpfs")
+    os.makedirs(root + "/tmp")
+    _mount(libc, b"tmpfs", root + "/tmp", b"tmpfs", MS_NOSUID | MS_NODEV, None, "tmp tmpfs")
+    wanted = [*_SYSTEM_READ_ROOTS, *spec.extra_read_paths, str(spec.project_root)]
+    resolved = sorted(
+        {os.path.realpath(p) for p in wanted if os.path.exists(os.path.realpath(p))},
+        key=lambda p: p.count("/"),
+    )
+    kept: list[str] = []  # drop paths nested under an earlier bind
+    for p in resolved:
+        if not any(p == q or p.startswith(q + "/") for q in kept):
+            kept.append(p)
+    for p in kept:
+        _bind(libc, p, root + p)
+    scratch = os.path.realpath(spec.scratch_home)
+    os.makedirs(root + scratch, exist_ok=True)
+    _mount(
+        libc, b"tmpfs", root + scratch, b"tmpfs",
+        MS_NOSUID | MS_NODEV, b"size=256m", "scratch tmpfs",
+    )
+    os.makedirs(root + "/dev", exist_ok=True)
+    for node in ("null", "zero", "urandom", "random"):
+        _bind(libc, f"/dev/{node}", f"{root}/dev/{node}")
+    _bind(libc, "/proc", root + "/proc")
+    os.chdir(root)
+    if libc.syscall(pivot_nr, b".", b".") != 0:
+        raise OSError(ctypes.get_errno(), "pivot_root failed")
+    if libc.umount2(b".", MNT_DETACH) != 0:
+        raise OSError(ctypes.get_errno(), "detaching the old root failed")
+    os.chdir("/")
+    # subprocess chdir'd to the project before this ran; renew it inside the
+    # new root, or the stale cwd keeps the detached old root reachable
+    os.chdir(os.path.realpath(spec.project_root))
 
 
 def run_linux_sandboxed(spec: SandboxSpec, argv: list[str]) -> BrokerResult:
@@ -150,17 +240,12 @@ def run_linux_sandboxed(spec: SandboxSpec, argv: list[str]) -> BrokerResult:
         Path("/proc/self/setgroups").write_text("deny")
         Path("/proc/self/uid_map").write_text(f"{uid} {uid} 1")
         Path("/proc/self/gid_map").write_text(f"{gid} {gid} 1")
-        # private tmpfs over the scratch home: writes never reach the real fs
-        if (
-            libc.mount(b"tmpfs", str(spec.scratch_home).encode(), b"tmpfs",
-                       MS_NOSUID | MS_NODEV, b"size=256m") != 0
-        ):
-            raise OSError(ctypes.get_errno(), "tmpfs mount over scratch home failed")
-        # the mount hides whatever the host put here, so populate it afterwards
+        _enter_minimal_root(libc, spec)
+        # written now so the files land inside the tmpfs the child sees
         spec.materialize_scratch_files()
         resource.setrlimit(resource.RLIMIT_FSIZE, (spec.fsize_bytes, spec.fsize_bytes))
         resource.setrlimit(resource.RLIMIT_AS, (spec.mem_bytes, spec.mem_bytes))
         os.setsid()
-        _apply_seccomp()
+        _apply_seccomp(libc)
 
     return _popen(argv, spec, preexec=preexec)
