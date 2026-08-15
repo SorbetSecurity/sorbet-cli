@@ -8,7 +8,7 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 datas = collect_data_files("sorb", includes=[
-    "graph/migrations/*.sql", "data/*.toml", "data/*.pem",
+    "graph/migrations/*.sql", "data/*.toml", "data/*.json", "data/*.pem",
     "ui/assets/*", "ui/assets/**/*", "plugin/proto/*.proto",
 ])
 

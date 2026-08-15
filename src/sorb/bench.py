@@ -12,6 +12,7 @@ slowdown, not micro-jitter.
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,7 +21,9 @@ from typing import Any
 
 DEFAULT_ITERATIONS = 3
 REGRESSION_THRESHOLD = 0.10  # >10% slower than baseline fails the gate
-STARTUP_BUDGET_MS = 300.0
+# Windows gets headroom: process creation plus Defender scanning inflates
+# cold starts by ~50% on comparable hardware
+STARTUP_BUDGET_MS = 450.0 if sys.platform == "win32" else 300.0
 
 
 @dataclass(frozen=True, slots=True)
