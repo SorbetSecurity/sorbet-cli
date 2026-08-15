@@ -194,16 +194,28 @@ def _enter_minimal_root(libc: ctypes.CDLL, spec: SandboxSpec) -> None:
     os.makedirs(root + "/tmp")
     _mount(libc, b"tmpfs", root + "/tmp", b"tmpfs", MS_NOSUID | MS_NODEV, None, "tmp tmpfs")
     wanted = [*_SYSTEM_READ_ROOTS, *spec.extra_read_paths, str(spec.project_root)]
-    resolved = sorted(
-        {os.path.realpath(p) for p in wanted if os.path.exists(os.path.realpath(p))},
-        key=lambda p: p.count("/"),
-    )
+    binds: set[str] = set()
+    links: dict[str, str] = {}
+    for p in wanted:
+        real = os.path.realpath(p)
+        if not os.path.exists(real):
+            continue
+        if os.path.islink(p):
+            # merged-usr layouts: /bin, /lib64… are symlinks into /usr; the
+            # link itself must exist in the new root or exec loses ld.so
+            links[p] = os.readlink(p)
+        binds.add(real)
     kept: list[str] = []  # drop paths nested under an earlier bind
-    for p in resolved:
+    for p in sorted(binds, key=lambda p: p.count("/")):
         if not any(p == q or p.startswith(q + "/") for q in kept):
             kept.append(p)
     for p in kept:
         _bind(libc, p, root + p)
+    for link, target in links.items():
+        dst = root + link
+        if not os.path.lexists(dst):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            os.symlink(target, dst)
     scratch = os.path.realpath(spec.scratch_home)
     os.makedirs(root + scratch, exist_ok=True)
     _mount(
