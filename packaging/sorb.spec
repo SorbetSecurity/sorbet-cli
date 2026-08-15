@@ -5,6 +5,8 @@
 # Not run in the offline dev tree — CI produces the artifacts.
 # ruff: noqa
 # type: ignore
+import sys
+
 from PyInstaller.utils.hooks import collect_data_files
 
 datas = collect_data_files("sorb", includes=[
@@ -26,7 +28,7 @@ exe = EXE(
     pyz, a.scripts, a.binaries, a.datas,
     name="sorb",
     console=True,
-    strip=True,
+    strip=sys.platform != "win32",  # GNU strip corrupts PE DLLs
     upx=False,
     onefile=True,
 )
