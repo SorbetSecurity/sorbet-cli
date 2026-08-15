@@ -21,7 +21,7 @@ jobs:
         include:
           - { os: ubuntu-latest, asset: sorb-linux-x86_64.tar.gz }
           - { os: macos-latest, asset: sorb-macos-arm64.tar.gz }
-          - { os: macos-13, asset: sorb-macos-x86_64.tar.gz }
+          - { os: macos-15-intel, asset: sorb-macos-x86_64.tar.gz }
           - { os: windows-latest, asset: sorb-windows-x86_64.zip }
     runs-on: ${{ matrix.os }}
     steps:
