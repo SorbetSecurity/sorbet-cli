@@ -9,6 +9,7 @@ from __future__ import annotations
 from sorb.cli.app import app
 from sorb.cli.commands import (  # noqa: F401  (imported for registration)
     admin,
+    corrections,
     inspect,
     interop,
     observe,

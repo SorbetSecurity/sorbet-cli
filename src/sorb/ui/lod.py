@@ -163,3 +163,60 @@ def _expand(
 
 
 _TIER_VALUES = {t.label: int(t) for t in Tier}
+
+#: dependency-tree keep-set: emitted, and never CBOM assets (certs carry no deps)
+_DEPS_KEEP = (
+    "json_extract(c.attrs,'$.excluded') IS NULL "
+    "AND COALESCE(json_extract(c.attrs,'$.ecosystem'),'') <> 'crypto'"
+)
+#: child count restricted to children the tree will actually show
+_KIDS_SQL = (
+    "(SELECT COUNT(*) FROM edges k JOIN components cc ON cc.id = k.dst "
+    "WHERE k.kind='DEPENDS_ON' AND k.src=c.id "
+    "AND json_extract(cc.attrs,'$.excluded') IS NULL "
+    "AND COALESCE(json_extract(cc.attrs,'$.ecosystem'),'') <> 'crypto') AS kids"
+)
+
+
+def deps(
+    store: GraphStore, *, node: str = "root", node_budget: int = 500, direction: str = "down"
+) -> LodResponse:
+    """One level of the dependency tree.
+
+    ``node="root"`` returns the top level — components nothing depends on.
+    Any other node returns its direct dependencies (``direction="down"``) or
+    its direct dependents (``direction="up"``, used to anchor a component to
+    a visible root). Each node carries its own child count for lazy expansion.
+    """
+    conn = store._conn
+    resp = LodResponse(node_budget=node_budget)
+    if node == "root":
+        rows = conn.execute(
+            f"SELECT c.*, {_KIDS_SQL} FROM components c WHERE {_DEPS_KEEP} "  # noqa: S608 — fixed SQL fragments
+            "AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.kind='DEPENDS_ON' AND e.dst=c.id) "
+            "ORDER BY kids DESC, c.name, c.id LIMIT ?",
+            (node_budget + 1,),
+        ).fetchall()
+    else:
+        join = (
+            "JOIN edges e ON e.dst=c.id AND e.kind='DEPENDS_ON' AND e.src=?"
+            if direction == "down"
+            else "JOIN edges e ON e.src=c.id AND e.kind='DEPENDS_ON' AND e.dst=?"
+        )
+        rows = conn.execute(
+            f"SELECT DISTINCT c.*, {_KIDS_SQL} FROM components c {join} "  # noqa: S608 — fixed SQL fragments
+            f"WHERE {_DEPS_KEEP} ORDER BY kids DESC, c.name, c.id LIMIT ?",
+            (int(node), node_budget + 1),
+        ).fetchall()
+    resp.truncated = len(rows) > node_budget
+    for r in rows[:node_budget]:
+        comp = store._row_to_component(r)
+        resp.nodes.append(
+            LodNode(
+                id=f"component:{comp.id}", label=comp.display_ref(), kind="component",
+                count=int(r["kids"]),
+                ecosystem=str(comp.attrs.get("ecosystem", "")), tier=comp.tier.label,
+                scope=comp.attrs.get("scope"), component_id=comp.id,
+            )
+        )
+    return resp

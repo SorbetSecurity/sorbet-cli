@@ -196,6 +196,10 @@ class NativeBinaryCataloger(Cataloger):
             info.has_clr
             or b"\xff Go buildinf:" in blob[:1 << 16] or b"\xff Go buildinf:" in blob
             or info.section(".dep-v0") is not None
+            # extension modules inside an installed package tree belong to the
+            # package (pypi/npm) that the ecosystem cataloger already inventoried
+            or any(seg in f"/{entry.path}" for seg in
+                   ("/site-packages/", "/dist-packages/", "/node_modules/"))
         )
         if not identified and not owned_elsewhere and info.kind not in ("object", "core") and info.fmt != "wasm":
             hints = []

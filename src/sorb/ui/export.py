@@ -45,14 +45,19 @@ def export_sbom(
     fmt: str,
     *,
     component_ids: Iterable[int] | None = None,
+    include_excluded: bool = False,
 ) -> tuple[bytes, str, str]:
-    """Return ``(body, media_type, filename)`` for a full-run or subgraph SBOM."""
+    """Return ``(body, media_type, filename)`` for a full-run or subgraph SBOM.
+
+    ``include_excluded`` lifts the emit threshold: selected components that
+    the scan held back (below-threshold, removed, user-marked) emit anyway.
+    """
     if fmt not in _MEDIA:
         raise ValueError(f"unknown export format {fmt!r} (cyclonedx|spdx|native)")
     media_type, filename = _MEDIA[fmt]
 
     ids = None if component_ids is None else set(component_ids)
-    if not ids:
+    if not ids and not include_excluded:
         store = GraphStore.open_readonly(db_path)
         try:
             return _emit(store, fmt), media_type, filename
@@ -71,11 +76,21 @@ def export_sbom(
                 shutil.copy2(side, copy.with_name(copy.name + suffix))
         store = GraphStore.open_rw(copy)
         try:
-            keep = ",".join(str(int(i)) for i in ids) or "-1"
-            store._conn.execute(  # noqa: S608 — keep-list is int-sanitized above
-                f"UPDATE components SET attrs = json_set(coalesce(attrs,'{{}}'), "
-                f"'$.excluded', json('true')) WHERE id NOT IN ({keep})"
-            )
+            if ids:
+                keep = ",".join(str(int(i)) for i in ids) or "-1"
+                store._conn.execute(  # noqa: S608 — keep-list is int-sanitized above
+                    f"UPDATE components SET attrs = json_set(coalesce(attrs,'{{}}'), "
+                    f"'$.excluded', json('true')) WHERE id NOT IN ({keep})"
+                )
+                if include_excluded:
+                    store._conn.execute(  # noqa: S608 — keep-list is int-sanitized above
+                        f"UPDATE components SET attrs = json_remove(attrs, '$.excluded') "
+                        f"WHERE id IN ({keep})"
+                    )
+            elif include_excluded:
+                store._conn.execute(
+                    "UPDATE components SET attrs = json_remove(attrs, '$.excluded')"
+                )
             store.commit()
             return _emit(store, fmt), media_type, filename
         finally:

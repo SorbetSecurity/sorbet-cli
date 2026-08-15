@@ -261,6 +261,24 @@ def _register_api(app: FastAPI, state: ServerState) -> None:
         finally:
             store.close()
 
+    @app.get("/api/runs/{run_id}/deps")
+    def deps_endpoint(
+        run_id: str, node: str = "root", budget: int = 500, dir: str = "down"  # noqa: A002 — query param name
+    ) -> dict[str, Any]:
+        from sorb.ui.lod import deps
+
+        if node != "root" and not node.isdigit():
+            raise HTTPException(status_code=400, detail="node must be 'root' or a component id")
+        if dir not in ("down", "up"):
+            raise HTTPException(status_code=400, detail="dir must be 'down' or 'up'")
+        store = state.open(run_id)
+        try:
+            return deps(
+                store, node=node, node_budget=max(1, min(budget, 5000)), direction=dir
+            ).to_dict()
+        finally:
+            store.close()
+
     @app.get("/api/runs/{run_id}/lod")
     def lod_endpoint(run_id: str, cluster: str = "ecosystem", expand: str | None = None,
                      budget: int = 2000) -> dict[str, Any]:
@@ -338,13 +356,70 @@ def _register_api(app: FastAPI, state: ServerState) -> None:
         if ids is None and body.get("query"):
             ids = selection_from_query(db, str(body["query"]))
         try:
-            payload, media_type, filename = export_sbom(db, fmt, component_ids=ids)
+            payload, media_type, filename = export_sbom(
+                db, fmt, component_ids=ids,
+                include_excluded=bool(body.get("include_excluded")),
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return Response(
             content=payload, media_type=media_type,
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+    # -- project corrections: false positives & missing components -----------
+
+    def _corrections_root() -> Path | None:
+        t = state.config.target
+        if t and Path(t).is_dir():
+            return Path(t).resolve()
+        return None
+
+    @app.get("/api/corrections")
+    def corrections_get() -> dict[str, Any]:
+        from sorb.core.corrections import corrections_path, load_corrections
+
+        root = _corrections_root()
+        if root is None:
+            return {"enabled": False, "corrections": []}
+        return {
+            "enabled": True,
+            "path": str(corrections_path(root)),
+            "corrections": [e.to_dict() for e in load_corrections(root)],
+        }
+
+    @app.post("/api/corrections")
+    async def corrections_post(request: Request) -> dict[str, Any]:
+        from sorb.core.corrections import (
+            KINDS,
+            Correction,
+            add_correction,
+            remove_correction,
+        )
+
+        root = _corrections_root()
+        if root is None:
+            raise HTTPException(
+                status_code=400,
+                detail="no project open — corrections need a project directory "
+                "(serve with `sorb ui <target-dir>`)",
+            )
+        body = await request.json()
+        op = str(body.get("op", "add"))
+        kind = str(body.get("kind", ""))
+        ref = str(body.get("ref", "")).strip()
+        if kind not in KINDS or not ref:
+            raise HTTPException(status_code=400, detail=f"kind must be one of {KINDS}, ref required")
+        if op == "remove":
+            changed = remove_correction(root, kind, ref)
+        elif op == "add":
+            changed = add_correction(root, Correction(
+                kind=kind, ref=ref, reason=str(body.get("reason", "")),
+                ecosystem=str(body.get("ecosystem", "")), scope=str(body.get("scope", "")),
+            ))
+        else:
+            raise HTTPException(status_code=400, detail="op must be add or remove")
+        return {"changed": changed, **corrections_get()}
 
     @app.get("/api/events", response_model=None)
     async def events_endpoint() -> StreamingResponse:
@@ -541,23 +616,34 @@ def _fleet_json(store: GraphStore) -> dict[str, Any]:
 
     hosts: dict[str, dict[str, Any]] = {}
     observed_components = 0
+    skew: dict[str, dict[str, set[str]]] = {}
     for c in store.components():
         if c.attrs.get("excluded"):
             continue
         seen = _json.loads(c.attrs.get("seen_in", "[]")) if c.attrs.get("seen_in") else []
         if c.attrs.get("observed") == "true":
             observed_components += 1
+        is_pkg = c.attrs.get("ecosystem") != "crypto"
         for entry in seen:
-            h = hosts.setdefault(entry.get("source", "?"),
-                                 {"host": entry.get("source", "?"), "components": 0, "observed": 0})
+            src = entry.get("source", "?")
+            h = hosts.setdefault(src, {"host": src, "components": 0, "observed": 0})
             h["components"] += 1
             if entry.get("observed"):
                 h["observed"] += 1
+            if is_pkg and c.version:
+                skew.setdefault(c.name, {}).setdefault(src, set()).add(c.version)
+    version_skew = []
+    for name, per in sorted(skew.items()):
+        if len({v for vs in per.values() for v in vs}) > 1:
+            version_skew.append({"name": name,
+                                 "versions": {s: sorted(vs) for s, vs in per.items()}})
     return {
         "is_fleet": bool(store.get_meta("fleet_sources")),
         "sources": _json.loads(store.get_meta("fleet_sources") or "[]"),
         "hosts": sorted(hosts.values(), key=lambda h: -h["components"]),
         "observed_components": observed_components,
+        "version_skew": version_skew[:100],
+        "version_skew_total": len(version_skew),
     }
 
 
@@ -587,10 +673,24 @@ def _runs_index(state: ServerState) -> list[dict[str, Any]]:
                 "created": entry.get("created"), "reason": entry.get("reason"),
                 "doc_version": entry.get("doc_version"),
             })
-    if not runs and state._current_db and state._current_db.is_file():
-        runs.append({"run": "current", "subject": state.config.target or ".",
-                     "serial": None, "created": None, "reason": "adhoc", "doc_version": 1})
     runs.sort(key=lambda r: str(r.get("created") or ""), reverse=True)
+    # an explicitly opened store (`sorb ui file.sorb.db`) is not in the
+    # workspace index — pin it first, or the SPA silently switches to runs[0]
+    opened = state._current_db
+    if opened and opened.is_file() and opened.parent != state.results_dir:
+        import sqlite3
+
+        subject = None
+        try:
+            store = GraphStore.open_readonly(opened)
+            try:
+                subject = store.get_meta("subject")
+            finally:
+                store.close()
+        except (OSError, sqlite3.Error):
+            pass
+        runs.insert(0, {"run": "current", "subject": subject or opened.name,
+                        "serial": None, "created": None, "reason": "opened", "doc_version": 1})
     return runs
 
 

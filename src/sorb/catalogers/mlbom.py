@@ -49,8 +49,12 @@ class ModelCataloger(Cataloger):
             info = _onnx(blob)
             fmt = "onnx"
         elif lower.endswith((".pt", ".pth", ".pkl", ".ckpt")):
+            if blob[:4] != _ZIP_MAGIC and blob[:1] != _PICKLE_MAGIC:
+                # `.pth` doubles as site-packages path-config text files — only
+                # actual pickle/zip payloads are models
+                return
             fmt = "torchscript" if blob[:4] == _ZIP_MAGIC else "pickle"
-            risk = blob[:4] == _ZIP_MAGIC or blob[:1] == _PICKLE_MAGIC
+            risk = True
         else:
             return
 
