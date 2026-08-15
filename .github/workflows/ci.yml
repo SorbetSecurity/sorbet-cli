@@ -32,6 +32,9 @@ jobs:
         run: mypy
       - name: Layer contracts
         run: lint-imports
+      - name: Allow unprivileged user namespaces so the sandbox tests run
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Tests (network-blocked)
         run: pytest -q --cov=sorb --cov-report=term:skip-covered
       # `sorb bench` owns the startup budget and the perf-regression gate, so

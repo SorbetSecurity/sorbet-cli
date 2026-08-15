@@ -44,6 +44,7 @@ def test_env_is_scrubbed(tmp_path: Path, monkeypatch) -> None:
     assert set(env) - {"HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "SORB_OUT"} <= set(_ENV_ALLOWLIST)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="asserts POSIX paths inside the profile")
 def test_macos_profile_denies_by_default(tmp_path: Path) -> None:
     from sorb.dynamic.sandbox.macos import generate_profile
 

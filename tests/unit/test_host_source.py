@@ -108,7 +108,7 @@ def test_store_discovery_is_bounded(tmp_path: Path) -> None:
     root.mkdir()
     _build_host(root)
     roots = discover_store_roots(root)
-    names = {str(p.relative_to(root)) for p in roots}
+    names = {p.relative_to(root).as_posix() for p in roots}
     assert "var/lib/dpkg" in names
     # noise dirs are never store roots
     assert "var/log" not in names and "etc" not in names

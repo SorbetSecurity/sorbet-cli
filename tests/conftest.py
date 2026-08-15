@@ -21,7 +21,14 @@ class _NetworkBlocked(RuntimeError):
 
 @pytest.fixture(autouse=True)
 def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    def guard(*args: object, **kwargs: object) -> None:
+    real_connect = socket.socket.connect
+
+    def guard(self: socket.socket, address: object) -> None:
+        # loopback stays open: asyncio's Windows event loop bootstraps itself
+        # through a socketpair emulated as a 127.0.0.1 connect
+        host = address[0] if isinstance(address, tuple) else address
+        if not isinstance(address, tuple) or host in ("127.0.0.1", "::1", "localhost"):
+            return real_connect(self, address)
         raise _NetworkBlocked("tests must not touch the network")
 
     monkeypatch.setattr(socket.socket, "connect", guard)

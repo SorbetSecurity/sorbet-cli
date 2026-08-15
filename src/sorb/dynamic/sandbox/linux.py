@@ -75,8 +75,9 @@ def linux_sandbox_available() -> tuple[bool, str]:
         pid = os.fork()
         if pid == 0:  # child probe
             try:
-                _libc().unshare(CLONE_NEWUSER)
-                os._exit(0)
+                # ctypes returns -1 on failure instead of raising (e.g. EPERM
+                # under Ubuntu 24.04's AppArmor userns restriction)
+                os._exit(0 if _libc().unshare(CLONE_NEWUSER) == 0 else 1)
             except Exception:  # noqa: BLE001
                 os._exit(1)
         _, status = os.waitpid(pid, 0)
