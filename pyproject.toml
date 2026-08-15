@@ -98,6 +98,8 @@ ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
+# pinned so mypy on Windows CI doesn't reject the Unix-only APIs in sandbox/linux.py
+platform = "linux"
 strict = true
 mypy_path = "src"
 packages = ["sorb"]
