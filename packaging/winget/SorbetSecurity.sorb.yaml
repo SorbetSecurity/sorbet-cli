@@ -1,5 +1,5 @@
 # winget manifest for the standalone sorb bundle.
-# Templated at release; {{VERSION}} / {{SHA256}} filled by the release pipeline.
+# Templated at release; the VERSION and SHA256 tokens are filled by the release pipeline.
 PackageIdentifier: SorbetSecurity.sorb
 PackageVersion: "{{VERSION}}"
 PackageName: sorb

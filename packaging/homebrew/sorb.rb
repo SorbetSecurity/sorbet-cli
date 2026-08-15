@@ -1,5 +1,5 @@
 # Homebrew formula for the standalone sorb bundle.
-# Templated at release: {{VERSION}} / {{SHA256_*}} are filled by the release
+# Templated at release: the VERSION and SHA256 tokens are filled by the release
 # pipeline, which also Sigstore-signs the artifacts (verified by `sorb verify`).
 class Sorb < Formula
   desc "Evidence-backed dependency analysis and SBOM generation"
