@@ -5,11 +5,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sorb.bench import (
     STARTUP_BUDGET_MS,
     BenchResult,
     check_regression,
     run_suite,
+    sorb_binary,
     startup_ms,
     synthetic_monorepo,
     timed,
@@ -49,7 +52,10 @@ def test_regression_gate_passes_within_budget() -> None:
 
 
 def test_startup_gate() -> None:
-    st = startup_ms(".venv/bin/sorb")
+    binary = sorb_binary()
+    if binary is None:
+        pytest.skip("no sorb entry point on PATH or argv[0]")
+    st = startup_ms(binary)
     assert st < STARTUP_BUDGET_MS, f"sorb --help took {st:.0f}ms (budget {STARTUP_BUDGET_MS:.0f}ms)"
 
 

@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
 
 jobs:
   test:
@@ -15,9 +18,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v4
       # `wasm` is installed so the WASM plugin ABI tests run rather than skip;
       # every other optional runtime is exercised through in-process fakes.
       - name: Install
@@ -28,6 +32,9 @@ jobs:
         run: mypy
       - name: Layer contracts
         run: lint-imports
+      - name: Allow unprivileged user namespaces so the sandbox tests run
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Tests (network-blocked)
         run: pytest -q --cov=sorb --cov-report=term:skip-covered
       # `sorb bench` owns the startup budget and the perf-regression gate, so
@@ -42,9 +49,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - uses: astral-sh/setup-uv@v4
       - name: Install
         run: uv pip install --system -e ".[dev]"
       - name: Install syft

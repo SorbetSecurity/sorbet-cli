@@ -9,6 +9,8 @@ import struct
 import sys
 from pathlib import Path
 
+import pytest
+
 from sorb.binary.analyze import analyze_binary
 from sorb.binary.embedded.extractors import (
     detect_frozen_app,
@@ -197,6 +199,7 @@ def test_corrupt_elf_gaps_gracefully() -> None:
     assert info is not None and info.fmt == "elf"  # info-or-gap, never a crash
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="reads real Mach-O binaries from the host")
 def test_real_macho_and_fat() -> None:
     ls = parse_binary(Path("/bin/ls").read_bytes())
     assert ls is not None and ls.fmt == "macho-fat"
@@ -289,6 +292,7 @@ def test_cas_caches_parse() -> None:
         assert first.soname == second.soname == "libfoo.so.1"
         assert cas.hits >= 1  # the second parse was a cache hit
         assert stats_before >= 1
+        cas.close()  # Windows cannot delete the tempdir while cas.db is open
 
 
 def test_frozen_app_detection() -> None:
