@@ -14,7 +14,7 @@ infrastructure config, or a whole machine - and it produces an
 carries occurrence evidence, a provenance chain, and a confidence score.
 
 ```bash
-uv tool install sorb        # or: pipx install sorb
+pip install sorb              # or: uv tool install sorb / pipx install sorb
 sorb scan .                   # scan a repo
 sorb scan image:alpine:3.20   # scan a container image, per layer
 sorb ui                       # browse the results in a local web UI
