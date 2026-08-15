@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/SorbetSecurity/sorbet-cli/security/advisories/new
+    about: Report security issues privately — please don't open a public issue.
+  - name: Documentation
+    url: https://github.com/SorbetSecurity/sorbet-cli/tree/main/docs
+    about: Usage, architecture, supported ecosystems, and the plugin ABI.

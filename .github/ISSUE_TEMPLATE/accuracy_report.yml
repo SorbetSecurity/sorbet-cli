@@ -1,0 +1,62 @@
+name: Accuracy report
+description: The SBOM has a wrong, missing, or extra component
+labels: [accuracy]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: sorb version
+      placeholder: "0.1.0 (sorb --version)"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of inaccuracy
+      options:
+        - Missing component (it's really there, sorb didn't report it)
+        - Extra component (false positive)
+        - Wrong version
+        - Wrong license
+        - Wrong scope, layer, or provenance attribution
+        - Confidence score seems wrong
+    validations:
+      required: true
+  - type: input
+    id: component
+    attributes:
+      label: Component
+      placeholder: "pkg:npm/lodash@4.17.21 (a purl, or name@version)"
+    validations:
+      required: true
+  - type: textarea
+    id: target
+    attributes:
+      label: Target and command
+      description: >
+        What you scanned and how. A public target (repo URL, image
+        reference, or a minimal tarball attached to this issue) lets us add
+        it to the accuracy corpus so the fix stays fixed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: explain
+    attributes:
+      label: sorb explain output
+      description: >
+        For an extra/wrong component, paste `sorb explain <component>` — it
+        shows which detector claimed it, from which file and byte range, and
+        how the confidence was derived. Skip this for missing components.
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: Why the current answer is wrong
+      description: >
+        The ground truth and how you know it — e.g. the lockfile entry, the
+        installed version on the machine, or what another tool reports.
+    validations:
+      required: true
