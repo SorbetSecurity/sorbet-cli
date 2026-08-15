@@ -81,13 +81,17 @@ jobs:
       - run: pip install build
       - run: python -m build
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true  # re-tagged runs must not fail on the published version
 
   release:
     runs-on: ubuntu-latest
     needs: [bundles, self-sbom]
     steps:
       - uses: actions/download-artifact@v4
-        with: { path: artifacts }
+        with: { path: artifacts, pattern: "bundle-*" }
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, name: self-sbom }
       - name: Collect the release assets
         run: |
           mkdir -p upload
@@ -112,6 +116,8 @@ jobs:
           username: "${{ github.actor }}"
           password: "${{ secrets.GITHUB_TOKEN }}"
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: "false"  # its artifact breaks download-all steps
         with:
           push: true
           tags: |
@@ -126,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { path: artifacts }
+        with: { path: artifacts, pattern: "bundle-*" }
       - name: Fill the Homebrew and winget templates
         run: |
           set -euo pipefail
