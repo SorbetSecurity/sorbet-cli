@@ -609,6 +609,10 @@ class DistInfoCataloger(Cataloger):
                 req = Requirement(req_line)
             except InvalidRequirement:
                 continue
+            if req.marker is not None and "extra" in str(req.marker):
+                # extras not installed here are not dependencies of this
+                # environment (and create phantom cycles like setuptools ⇄ pytest)
+                continue
             edges.append(
                 EdgeClaim(
                     kind=EdgeType.DEPENDS_ON,

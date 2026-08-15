@@ -196,6 +196,41 @@ def test_lod_overview_and_expand(served) -> None:
     assert expanded["node_budget"] >= len(expanded["nodes"])
 
 
+def test_corrections_endpoint_and_export_options(served) -> None:
+    client, config, _ = served
+    r = client.get("/api/corrections").json()
+    assert r["enabled"] and r["corrections"] == []
+    r = client.post("/api/corrections",
+                    json={"op": "add", "kind": "false-positive", "ref": "lodash"}).json()
+    assert r["changed"] and any(e["ref"] == "lodash" for e in r["corrections"])
+    assert (Path(config.target) / "sorb.corrections.json").is_file()
+    r = client.post("/api/corrections",
+                    json={"op": "remove", "kind": "false-positive", "ref": "lodash"}).json()
+    assert r["changed"] and r["corrections"] == []
+    assert client.post("/api/corrections", json={"op": "add", "kind": "nope", "ref": "x"}
+                       ).status_code == 400
+    # export honors include_excluded without breaking the emit path
+    resp = client.post("/api/export", json={
+        "format": "cyclonedx", "query": "components", "run": "current",
+        "include_excluded": True})
+    assert resp.status_code == 200 and b"bomFormat" in resp.content
+
+
+def test_deps_tree_roots_then_children(served) -> None:
+    """The dependency tree expands one level at a time from its roots."""
+    client, _, _ = served
+    roots = client.get("/api/runs/current/deps").json()
+    assert roots["nodes"], "a scanned project must expose top-level components"
+    assert all(n["kind"] == "component" for n in roots["nodes"])
+    parent = next((n for n in roots["nodes"] if n["count"] > 0), None)
+    if parent is not None:
+        kids = client.get(
+            "/api/runs/current/deps", params={"node": str(parent["component_id"])}
+        ).json()
+        assert kids["nodes"], "a node advertising children must expand to them"
+    assert client.get("/api/runs/current/deps", params={"node": "nonsense"}).status_code == 400
+
+
 def test_lod_respects_node_budget(served) -> None:
     client, _, _ = served
     overview = client.get("/api/runs/current/lod").json()

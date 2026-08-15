@@ -462,6 +462,22 @@ def _run_dir_scan(
     for code, message in stats.warnings:
         bus.emit(WarningRaised(code=code, message=message))
     profile["reconcile_s"] = round(time.monotonic() - t_rec, 3)
+
+    # ---- project corrections (sorb.corrections.json) --------------------------
+    root = Path(target_spec)
+    if root.is_dir():
+        from sorb.core.corrections import apply_corrections, load_corrections
+
+        entries = load_corrections(root.resolve())
+        if entries:
+            t_cor = time.monotonic()
+            fps, asserted = apply_corrections(store, entries)
+            bus.emit(StageCompleted(
+                stage="corrections", duration_s=round(time.monotonic() - t_cor, 3),
+                detail=f"{fps} false positive(s) excluded · "
+                f"{asserted} asserted component(s) added",
+            ))
+
     counters = store.counters()
     bus.emit(
         StageCompleted(

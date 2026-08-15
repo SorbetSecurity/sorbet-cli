@@ -571,11 +571,22 @@ def reconcile(
             stats.warnings.append(("SORB-W031", f"{name}: installed but not declared"))
 
     # ---- 8. EMIT-SET thresholds --------------------------------------------------
+    # components whose every occurrence sits in a test-fixture path describe the
+    # test corpus, not the scanned software — retained in the graph, not emitted
+    fixture_only = {
+        int(r[0]) for r in store._conn.execute(
+            "SELECT f.component_id FROM findings f JOIN evidence e ON e.finding_id = f.id "
+            "WHERE f.component_id IS NOT NULL GROUP BY f.component_id "
+            "HAVING SUM(CASE WHEN e.modifiers LIKE '%path-role-fixture%' THEN 0 ELSE 1 END) = 0"
+        ).fetchall()
+    }
     for cid, info in cid_info.items():
         exclude_reason = None
         top: Tier = info["top_tier"]
         if paranoid and top < Tier.LOCKED:
             exclude_reason = "below locked tier (--paranoid)"
+        elif cid in fixture_only:
+            exclude_reason = "all evidence from test-fixture paths"
         elif top is Tier.INFERRED and info["confidence"] < min_confidence:
             exclude_reason = f"inferred-only confidence {info['confidence']} < {min_confidence}"
         elif scope_filter != "all" and info["attrs"].get("scope") not in (None, scope_filter):

@@ -39,6 +39,15 @@ sorb ui                       # browse the results in a local web UI
   `explain`, `query`, `diff`, `merge`, `fleet` and the UI. SBOM files are
   views over it, and any result exports as a CycloneDX or SPDX subgraph.
 
+## The evidence explorer
+
+`sorb ui` opens a local, fully offline web UI over any scan: an overview
+dashboard, a filterable component inventory, an expandable dependency tree,
+per-layer container attribution, fleet-wide version skew, and SBOM export —
+every number clickable down to its evidence.
+
+<img src="https://raw.githubusercontent.com/SorbetSecurity/sorbet-cli/main/docs/assets/ui.jpg" alt="the sorb evidence explorer: dashboard, component inventory and dependency graph" width="100%">
+
 ## What it scans
 
 | Target | Examples |
