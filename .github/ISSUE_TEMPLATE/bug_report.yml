@@ -1,0 +1,61 @@
+name: Bug report
+description: A command crashes, hangs, or behaves incorrectly
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: sorb version
+      placeholder: "0.1.0 (sorb --version)"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS and Python version
+      placeholder: "Ubuntu 24.04, Python 3.13 (installed via uv tool install)"
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Scan target kind
+      options:
+        - Source tree
+        - Container image
+        - Compiled binary
+        - Mobile app / installer / firmware
+        - IaC (Terraform, Kubernetes, ...)
+        - Whole machine (host:// or disk://)
+        - SBOM file (convert / merge / diff / validate)
+        - Not scan-related (query, ui, sign, ...)
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command
+      description: The full command line you ran, with flags.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: What happened
+      description: >
+        What you did, what happened, and what you expected instead. If the
+        target is public (a repo URL or image reference), include it — a
+        reproducible target turns most fixes around much faster.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Relevant output
+      description: >
+        Paste the error output or traceback. If the scan produced
+        `analysis-gap` annotations, include those too.
+      render: text
+    validations:
+      required: false
